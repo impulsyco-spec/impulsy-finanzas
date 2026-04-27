@@ -92,7 +92,25 @@ const Proyeccion: React.FC = () => {
     } finally { setSaving(false); }
   };
 
-  const colsGrid = numMeses <= 3 ? `repeat(${numMeses},1fr)` : numMeses <= 6 ? 'repeat(3,1fr)' : 'repeat(4,1fr)';
+  // Cumulative totals for selected period
+  const totalIngProyectado = mesesProyectados.reduce((s, m) => s + m.ingresosProyectados, 0);
+  const totalGasFijos      = totalMensual * numMeses;
+  const totalCuotas        = totalDeudas * numMeses;
+  const totalComprometido  = mesesProyectados.reduce((s, m) => s + m.gastosComprometidos, 0);
+  const totalEgresosPeriodo = totalGasFijos + totalCuotas + totalComprometido;
+  const balancePeriodo     = totalIngProyectado - totalEgresosPeriodo;
+
+  // Running balance per month for mini sparkline
+  let runningBal = 0;
+  const runningBals = mesesProyectados.map(m => {
+    runningBal += m.ingresosProyectados - m.totalEgresos;
+    return runningBal;
+  });
+  const minBal = Math.min(0, ...runningBals);
+  const maxBal = Math.max(1, ...runningBals);
+  const balRange = maxBal - minBal || 1;
+
+  const [showDetail, setShowDetail] = useState(false);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -190,10 +208,10 @@ const Proyeccion: React.FC = () => {
         )}
       </div>
 
-      {/* Selector de escenario + proyección */}
+      {/* Selector de escenario + proyección acumulada */}
       <div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-          <h3 style={{ color: '#fff', fontWeight: 700 }}>Proyección de caja</h3>
+          <h3 style={{ color: '#fff', fontWeight: 700 }}>Proyección acumulada</h3>
           <div style={{ display: 'flex', gap: '0.3rem', background: '#111', padding: '0.2rem', borderRadius: '10px' }}>
             {ESCENARIOS.map(e => (
               <button key={e.value} onClick={() => setNumMeses(e.value)}
@@ -204,52 +222,123 @@ const Proyeccion: React.FC = () => {
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: colsGrid, gap: '0.875rem' }}>
-          {mesesProyectados.map((m, i) => (
-            <div key={m.ms} className="card" style={{ padding: '1.1rem', borderColor: m.isCurrentMonth ? '#2a2a2a' : '#1a1a1a' }}>
-              <div style={{ fontSize: '0.65rem', color: m.isCurrentMonth ? '#a0aec0' : '#52525b', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.5px', marginBottom: '0.75rem' }}>
-                {m.isCurrentMonth ? '← Este mes' : `+${i} mes${i > 1 ? 'es' : ''}`} · {m.mes} {m.año !== today.getFullYear() ? m.año : ''}
+        {/* Tarjeta resumen acumulado */}
+        <div className="card" style={{ padding: '1.5rem', borderTop: `3px solid ${balancePeriodo >= 0 ? '#10b98155' : '#ef444433'}`, marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.25rem' }}>
+            <div>
+              <div style={{ fontSize: '0.65rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.5px' }}>
+                Balance acumulado · próximos {numMeses} {numMeses === 1 ? 'mes' : 'meses'}
               </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: '0.75rem', color: '#71717a' }}>Cobros acordados</span>
-                  <span style={{ fontWeight: 700, color: '#10b981', fontSize: '0.8rem' }}>{fmtK(m.ingresosProyectados)}</span>
-                </div>
-                <div style={{ height: '1px', background: '#1a1a1a' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: '0.72rem', color: '#71717a' }}>Gastos fijos</span>
-                  <span style={{ color: '#ef4444', fontSize: '0.72rem' }}>−{fmtK(m.gastosRecurrentes)}</span>
-                </div>
-                {m.cuotasDeuda > 0 && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: '0.72rem', color: '#71717a' }}>Cuotas deuda</span>
-                    <span style={{ color: '#f97316', fontSize: '0.72rem' }}>−{fmtK(m.cuotasDeuda)}</span>
-                  </div>
-                )}
-                {m.gastosComprometidos > 0 && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: '0.72rem', color: '#71717a' }}>Comprometidos</span>
-                    <span style={{ color: '#f59e0b', fontSize: '0.72rem' }}>−{fmtK(m.gastosComprometidos)}</span>
-                  </div>
-                )}
-                <div style={{ height: '1px', background: '#1a1a1a' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.15rem' }}>
-                  <span style={{ fontSize: '0.82rem', color: '#fff', fontWeight: 700 }}>Balance</span>
-                  <span style={{ fontWeight: 800, color: m.balance >= 0 ? '#10b981' : '#ef4444', fontSize: '0.95rem' }}>{fmtK(m.balance)}</span>
-                </div>
+              <div style={{ fontSize: '2.2rem', fontWeight: 900, color: balancePeriodo >= 0 ? '#10b981' : '#ef4444', lineHeight: 1.1, marginTop: '0.25rem' }}>
+                {fmtK(balancePeriodo)}
               </div>
-
-              {m.ingresosProyectados > 0 ? (
-                <div style={{ marginTop: '0.625rem', height: '5px', background: '#1a1a1a', borderRadius: '999px', overflow: 'hidden' }}>
-                  <div style={{ height: '100%', width: `${Math.min(100, (m.totalEgresos / m.ingresosProyectados) * 100)}%`, background: m.balance >= 0 ? '#10b981' : '#ef4444', borderRadius: '999px' }} />
-                </div>
-              ) : (
-                <div style={{ marginTop: '0.5rem', fontSize: '0.65rem', color: '#52525b' }}>Sin cobros registrados.</div>
-              )}
             </div>
-          ))}
+            <div style={{ display: 'flex', gap: '2rem' }}>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: '0.62rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700 }}>Ingresos proyectados</div>
+                <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#10b981' }}>{fmtK(totalIngProyectado)}</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: '0.62rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700 }}>Total egresos</div>
+                <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#ef4444' }}>{fmtK(totalEgresosPeriodo)}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Desglose de egresos */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '0.75rem', marginBottom: '1.25rem' }}>
+            <div style={{ background: '#0d0d0d', borderRadius: '10px', padding: '0.75rem 1rem' }}>
+              <div style={{ fontSize: '0.62rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700, marginBottom: '0.25rem' }}>Gastos fijos</div>
+              <div style={{ fontSize: '1rem', fontWeight: 800, color: '#ef4444' }}>{fmtK(totalGasFijos)}</div>
+              <div style={{ fontSize: '0.65rem', color: '#3f3f46', marginTop: '0.2rem' }}>{fmt(totalMensual)}/mes × {numMeses}</div>
+            </div>
+            {totalCuotas > 0 && (
+              <div style={{ background: '#0d0d0d', borderRadius: '10px', padding: '0.75rem 1rem' }}>
+                <div style={{ fontSize: '0.62rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700, marginBottom: '0.25rem' }}>Cuotas deuda</div>
+                <div style={{ fontSize: '1rem', fontWeight: 800, color: '#f97316' }}>{fmtK(totalCuotas)}</div>
+                <div style={{ fontSize: '0.65rem', color: '#3f3f46', marginTop: '0.2rem' }}>{fmt(totalDeudas)}/mes × {numMeses}</div>
+              </div>
+            )}
+            {totalComprometido > 0 && (
+              <div style={{ background: '#0d0d0d', borderRadius: '10px', padding: '0.75rem 1rem' }}>
+                <div style={{ fontSize: '0.62rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700, marginBottom: '0.25rem' }}>Comprometidos</div>
+                <div style={{ fontSize: '1rem', fontWeight: 800, color: '#f59e0b' }}>{fmtK(totalComprometido)}</div>
+                <div style={{ fontSize: '0.65rem', color: '#3f3f46', marginTop: '0.2rem' }}>Gastos esperados</div>
+              </div>
+            )}
+          </div>
+
+          {/* Barra de cobertura */}
+          {totalIngProyectado > 0 && (
+            <div style={{ marginBottom: '1.25rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
+                <span style={{ fontSize: '0.65rem', color: '#52525b' }}>Cobertura de egresos</span>
+                <span style={{ fontSize: '0.65rem', color: balancePeriodo >= 0 ? '#10b981' : '#ef4444', fontWeight: 700 }}>
+                  {Math.round((totalEgresosPeriodo / totalIngProyectado) * 100)}%
+                </span>
+              </div>
+              <div style={{ height: '6px', background: '#1a1a1a', borderRadius: '999px', overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${Math.min(100, (totalEgresosPeriodo / totalIngProyectado) * 100)}%`, background: balancePeriodo >= 0 ? '#10b981' : '#ef4444', borderRadius: '999px', transition: 'width 0.4s' }} />
+              </div>
+            </div>
+          )}
+
+          {/* Mini sparkline de balance acumulado mes a mes */}
+          {numMeses > 1 && (
+            <div>
+              <div style={{ fontSize: '0.62rem', color: '#3f3f46', marginBottom: '0.4rem', textTransform: 'uppercase', fontWeight: 700 }}>Evolución del balance acumulado</div>
+              <div style={{ display: 'flex', gap: '3px', alignItems: 'flex-end', height: '50px' }}>
+                {runningBals.map((bal, i) => {
+                  const heightPct = Math.max(4, ((bal - minBal) / balRange) * 100);
+                  return (
+                    <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
+                      <div style={{ width: '100%', height: `${heightPct}%`, background: bal >= 0 ? '#10b98166' : '#ef444466', borderRadius: '3px 3px 0 0', transition: 'height 0.4s' }} />
+                      <div style={{ fontSize: '0.52rem', color: '#3f3f46' }}>{mesesProyectados[i].mes.slice(0, 3)}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
+
+        {/* Desglose por mes (expandible) */}
+        <button
+          onClick={() => setShowDetail(v => !v)}
+          style={{ background: 'none', border: 'none', color: '#52525b', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.3rem', padding: '0.25rem 0', fontFamily: 'inherit' }}>
+          {showDetail ? '▾' : '▸'} Ver desglose mensual
+        </button>
+
+        {showDetail && (
+          <div style={{ display: 'grid', gridTemplateColumns: numMeses <= 3 ? `repeat(${numMeses},1fr)` : numMeses <= 6 ? 'repeat(3,1fr)' : 'repeat(4,1fr)', gap: '0.875rem', marginTop: '0.75rem' }}>
+            {mesesProyectados.map((m, i) => (
+              <div key={m.ms} className="card" style={{ padding: '1rem', borderColor: m.isCurrentMonth ? '#2a2a2a' : '#1a1a1a' }}>
+                <div style={{ fontSize: '0.62rem', color: m.isCurrentMonth ? '#a0aec0' : '#52525b', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.5px', marginBottom: '0.6rem' }}>
+                  {m.mes} {m.año !== today.getFullYear() ? m.año : ''} {m.isCurrentMonth ? '· actual' : ''}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: '0.72rem', color: '#71717a' }}>Cobros</span>
+                    <span style={{ fontWeight: 700, color: '#10b981', fontSize: '0.75rem' }}>{fmtK(m.ingresosProyectados)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: '0.72rem', color: '#71717a' }}>Egresos</span>
+                    <span style={{ color: '#ef4444', fontSize: '0.75rem' }}>−{fmtK(m.totalEgresos)}</span>
+                  </div>
+                  <div style={{ height: '1px', background: '#1a1a1a' }} />
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: '0.75rem', color: '#fff', fontWeight: 700 }}>Balance</span>
+                    <span style={{ fontWeight: 800, color: m.balance >= 0 ? '#10b981' : '#ef4444', fontSize: '0.82rem' }}>{fmtK(m.balance)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: '0.65rem', color: '#52525b' }}>Acumulado</span>
+                    <span style={{ fontSize: '0.65rem', color: runningBals[i] >= 0 ? '#10b981' : '#ef4444' }}>{fmtK(runningBals[i])}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
