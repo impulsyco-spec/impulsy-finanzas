@@ -15,38 +15,47 @@ type Tab = 'movimientos' | 'proyeccion' | 'cuentas' | 'deudas';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'movimientos', label: '📒 Movimientos' },
-  { id: 'proyeccion',  label: '🔮 Proyección 3 meses' },
+  { id: 'proyeccion',  label: '🔮 Proyección' },
   { id: 'cuentas',     label: '🏦 Cuentas & Bolsillos' },
   { id: 'deudas',      label: '🔗 Deudas' },
 ];
 
+const ESCENARIOS = [
+  { label: '1 mes',  value: 1 },
+  { label: '3 meses', value: 3 },
+  { label: '6 meses', value: 6 },
+  { label: '1 año',  value: 12 },
+];
+
 const emptyRecurring: Omit<RecurringExpense, 'id'> = {
-  nombre: '', valor: 0, categoria: 'Infraestructura', diaCobro: 1, activo: true,
+  nombre: '', valor: 0, categoria: 'Infraestructura', diaCobro: 1, activo: true, duracionMeses: 0,
+};
+
+const inp: React.CSSProperties = {
+  background: '#1a1a1a', border: '1px solid #333', color: '#fff',
+  padding: '0.5rem 0.75rem', borderRadius: '8px', fontSize: '0.82rem', fontFamily: 'inherit', width: '100%',
+};
+const lbl: React.CSSProperties = {
+  display: 'block', fontSize: '0.65rem', fontWeight: 700, color: '#71717a',
+  textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.2rem',
 };
 
 const Proyeccion: React.FC = () => {
   const { movements, debts } = useLedger();
-  const { payments, projects } = useSupabaseData();
+  const { payments } = useSupabaseData();
   const { items: recurring, add, remove, update, totalMensual } = useRecurring();
   const [showAdd, setShowAdd] = useState(false);
-  const [form, setForm] = useState({ ...emptyRecurring });
+  const [saving, setSaving] = useState(false);
+  const [numMeses, setNumMeses] = useState(3);
+  const [form, setForm] = useState<Omit<RecurringExpense, 'id'>>({ ...emptyRecurring });
 
-  const inp: React.CSSProperties = {
-    background: '#1a1a1a', border: '1px solid #333', color: '#fff',
-    padding: '0.5rem 0.75rem', borderRadius: '8px', fontSize: '0.82rem', fontFamily: 'inherit', width: '100%',
-  };
-  const lbl: React.CSSProperties = {
-    display: 'block', fontSize: '0.65rem', fontWeight: 700, color: '#71717a',
-    textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.2rem',
-  };
   const fmtInput = (v: string) => v.replace(/\D/g, '').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 
   const totalDeudas = debts.filter(d => d.activa).reduce((s, d) => s + d.cuotaMinima, 0);
   const totalFijos = totalMensual + totalDeudas;
 
-  // 3-month projection
   const today = new Date();
-  const months3 = [0, 1, 2].map(offset => {
+  const mesesProyectados = Array.from({ length: numMeses }, (_, offset) => {
     const d = new Date(today.getFullYear(), today.getMonth() + offset, 1);
     const ms = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 
@@ -58,35 +67,43 @@ const Proyeccion: React.FC = () => {
       .filter(m => m.naturaleza === 'egreso' && m.estado === 'esperado' && m.fecha.startsWith(ms))
       .reduce((s, m) => s + m.valor, 0);
 
-    const gastosRecurrentes = totalMensual;
-    const cuotasDeuda = totalDeudas;
-    const totalEgresos = gastosRecurrentes + cuotasDeuda + gastosComprometidos;
+    const totalEgresos = totalMensual + totalDeudas + gastosComprometidos;
     const balance = ingresosProyectados - totalEgresos;
 
     return {
       mes: MESES_ES[d.getMonth()],
+      año: d.getFullYear(),
       ms, ingresosProyectados, gastosComprometidos,
-      gastosRecurrentes, cuotasDeuda, totalEgresos, balance,
+      gastosRecurrentes: totalMensual, cuotasDeuda: totalDeudas,
+      totalEgresos, balance,
+      isCurrentMonth: offset === 0,
     };
   });
 
-  const handleAdd = () => {
-    if (!form.nombre.trim() || form.valor <= 0) { alert('Ingresa nombre y valor'); return; }
-    add({ ...form, valor: Number(String(form.valor).replace(/\./g, '')) });
-    setForm({ ...emptyRecurring });
-    setShowAdd(false);
+  const handleAdd = async () => {
+    if (!form.nombre.trim() || !form.valor || Number(String(form.valor).replace(/\./g, '')) <= 0) {
+      alert('Ingresa nombre y valor'); return;
+    }
+    setSaving(true);
+    try {
+      await add({ ...form, valor: Number(String(form.valor).replace(/\./g, '')) });
+      setForm({ ...emptyRecurring });
+      setShowAdd(false);
+    } finally { setSaving(false); }
   };
+
+  const colsGrid = numMeses <= 3 ? `repeat(${numMeses},1fr)` : numMeses <= 6 ? 'repeat(3,1fr)' : 'repeat(4,1fr)';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
 
-      {/* Gastos fijos recurrentes */}
+      {/* Gastos fijos */}
       <div className="card" style={{ padding: '1.25rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           <div>
             <h3 style={{ color: '#fff', fontWeight: 700 }}>Gastos Fijos Mensuales</h3>
             <p style={{ color: '#52525b', fontSize: '0.78rem', marginTop: '0.2rem' }}>
-              Oficina, apps, plataformas y servicios que se cobran todos los meses.
+              Al registrar un gasto fijo se crean automáticamente los movimientos planificados en la tabla.
             </p>
           </div>
           <div style={{ textAlign: 'right' }}>
@@ -95,7 +112,6 @@ const Proyeccion: React.FC = () => {
           </div>
         </div>
 
-        {/* Lista */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginBottom: '0.875rem' }}>
           {recurring.map(r => (
             <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.75rem', background: r.activo ? '#0d0d0d' : '#0a0a0a', borderRadius: '8px', opacity: r.activo ? 1 : 0.5 }}>
@@ -104,14 +120,14 @@ const Proyeccion: React.FC = () => {
               <span style={{ flex: 1, color: '#a0aec0', fontSize: '0.82rem' }}>{r.nombre}</span>
               <span style={{ fontSize: '0.7rem', color: '#52525b' }}>{r.categoria}</span>
               <span style={{ fontSize: '0.7rem', color: '#52525b' }}>Día {r.diaCobro}</span>
+              {r.duracionMeses > 0 && <span style={{ fontSize: '0.68rem', color: '#52525b' }}>{r.duracionMeses} meses</span>}
               <span style={{ fontWeight: 700, color: '#ef4444', fontSize: '0.85rem', minWidth: '80px', textAlign: 'right' }}>{fmt(r.valor)}</span>
-              <button onClick={() => remove(r.id)} style={{ background: 'none', border: 'none', color: '#52525b', cursor: 'pointer', padding: '0.25rem' }}>
+              <button onClick={() => remove(r.id)} style={{ background: 'none', border: 'none', color: '#52525b', cursor: 'pointer', padding: '0.25rem' }} title="Eliminar (solo borra los no pagados)">
                 <Trash2 size={13} />
               </button>
             </div>
           ))}
 
-          {/* Deudas como fijos */}
           {debts.filter(d => d.activa).map(d => (
             <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.75rem', background: '#0d0d0d', borderRadius: '8px', opacity: 0.7 }}>
               <span style={{ width: '14px', flexShrink: 0 }} />
@@ -130,9 +146,8 @@ const Proyeccion: React.FC = () => {
           )}
         </div>
 
-        {/* Agregar */}
         {showAdd ? (
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr auto', gap: '0.5rem', alignItems: 'flex-end', padding: '0.75rem', background: '#0a0a0a', borderRadius: '10px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr auto', gap: '0.5rem', alignItems: 'flex-end', padding: '0.75rem', background: '#0a0a0a', borderRadius: '10px' }}>
             <div>
               <label style={lbl}>Nombre</label>
               <input style={inp} value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} placeholder="Ej. Arriendo oficina" />
@@ -140,8 +155,8 @@ const Proyeccion: React.FC = () => {
             <div>
               <label style={lbl}>Valor COP</label>
               <input style={inp} type="text" inputMode="numeric"
-                value={typeof form.valor === 'number' ? String(form.valor) : form.valor}
-                onChange={e => setForm(f => ({ ...f, valor: e.target.value.replace(/\D/g,'') as any }))}
+                value={typeof form.valor === 'number' && form.valor === 0 ? '' : String(form.valor)}
+                onChange={e => setForm(f => ({ ...f, valor: fmtInput(e.target.value) as any }))}
                 placeholder="0" />
             </div>
             <div>
@@ -155,70 +170,82 @@ const Proyeccion: React.FC = () => {
               <input style={inp} type="number" min={1} max={31} value={form.diaCobro}
                 onChange={e => setForm(f => ({ ...f, diaCobro: Number(e.target.value) }))} />
             </div>
+            <div>
+              <label style={lbl}>Plazo (meses, 0=indefinido)</label>
+              <input style={inp} type="number" min={0} max={60} value={form.duracionMeses}
+                onChange={e => setForm(f => ({ ...f, duracionMeses: Number(e.target.value) }))}
+                placeholder="0" />
+            </div>
             <div style={{ display: 'flex', gap: '0.4rem' }}>
-              <button className="btn btn-primary" onClick={handleAdd} style={{ padding: '0.5rem 0.75rem', fontSize: '0.8rem' }}>Guardar</button>
+              <button className="btn btn-primary" onClick={handleAdd} disabled={saving} style={{ padding: '0.5rem 0.75rem', fontSize: '0.8rem' }}>
+                {saving ? '...' : 'Guardar'}
+              </button>
               <button className="btn btn-outline" onClick={() => setShowAdd(false)} style={{ padding: '0.5rem 0.75rem', fontSize: '0.8rem' }}>✕</button>
             </div>
           </div>
         ) : (
           <button onClick={() => setShowAdd(true)} className="btn btn-outline" style={{ width: '100%', padding: '0.5rem', fontSize: '0.82rem' }}>
-            <Plus size={14} /> Agregar gasto fijo
+            <Plus size={14} /> Agregar gasto fijo recurrente
           </button>
         )}
       </div>
 
-      {/* Proyección 3 meses */}
+      {/* Selector de escenario + proyección */}
       <div>
-        <h3 style={{ color: '#fff', fontWeight: 700, marginBottom: '1rem' }}>Proyección de caja — próximos 3 meses</h3>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '1rem' }}>
-          {months3.map((m, i) => (
-            <div key={m.ms} className="card" style={{ padding: '1.25rem', borderColor: i === 0 ? '#2a2a2a' : '#1a1a1a' }}>
-              <div style={{ fontSize: '0.7rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.5px', marginBottom: '0.875rem' }}>
-                {i === 0 ? '← Este mes' : i === 1 ? 'Próximo mes' : 'En 2 meses'} · {m.mes}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <h3 style={{ color: '#fff', fontWeight: 700 }}>Proyección de caja</h3>
+          <div style={{ display: 'flex', gap: '0.3rem', background: '#111', padding: '0.2rem', borderRadius: '10px' }}>
+            {ESCENARIOS.map(e => (
+              <button key={e.value} onClick={() => setNumMeses(e.value)}
+                style={{ padding: '0.35rem 0.75rem', borderRadius: '8px', fontSize: '0.78rem', fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: numMeses === e.value ? '#fff' : 'transparent', color: numMeses === e.value ? '#000' : '#71717a', transition: 'all 0.15s' }}>
+                {e.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: colsGrid, gap: '0.875rem' }}>
+          {mesesProyectados.map((m, i) => (
+            <div key={m.ms} className="card" style={{ padding: '1.1rem', borderColor: m.isCurrentMonth ? '#2a2a2a' : '#1a1a1a' }}>
+              <div style={{ fontSize: '0.65rem', color: m.isCurrentMonth ? '#a0aec0' : '#52525b', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.5px', marginBottom: '0.75rem' }}>
+                {m.isCurrentMonth ? '← Este mes' : `+${i} mes${i > 1 ? 'es' : ''}`} · {m.mes} {m.año !== today.getFullYear() ? m.año : ''}
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: '0.8rem', color: '#71717a' }}>Cobros acordados</span>
-                  <span style={{ fontWeight: 700, color: '#10b981', fontSize: '0.85rem' }}>{fmtK(m.ingresosProyectados)}</span>
+                  <span style={{ fontSize: '0.75rem', color: '#71717a' }}>Cobros acordados</span>
+                  <span style={{ fontWeight: 700, color: '#10b981', fontSize: '0.8rem' }}>{fmtK(m.ingresosProyectados)}</span>
                 </div>
                 <div style={{ height: '1px', background: '#1a1a1a' }} />
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: '0.78rem', color: '#71717a' }}>Gastos fijos</span>
-                  <span style={{ color: '#ef4444', fontSize: '0.78rem' }}>−{fmtK(m.gastosRecurrentes)}</span>
+                  <span style={{ fontSize: '0.72rem', color: '#71717a' }}>Gastos fijos</span>
+                  <span style={{ color: '#ef4444', fontSize: '0.72rem' }}>−{fmtK(m.gastosRecurrentes)}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: '0.78rem', color: '#71717a' }}>Cuotas deuda</span>
-                  <span style={{ color: '#f97316', fontSize: '0.78rem' }}>−{fmtK(m.cuotasDeuda)}</span>
-                </div>
+                {m.cuotasDeuda > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: '0.72rem', color: '#71717a' }}>Cuotas deuda</span>
+                    <span style={{ color: '#f97316', fontSize: '0.72rem' }}>−{fmtK(m.cuotasDeuda)}</span>
+                  </div>
+                )}
                 {m.gastosComprometidos > 0 && (
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: '0.78rem', color: '#71717a' }}>Gastos comprometidos</span>
-                    <span style={{ color: '#f59e0b', fontSize: '0.78rem' }}>−{fmtK(m.gastosComprometidos)}</span>
+                    <span style={{ fontSize: '0.72rem', color: '#71717a' }}>Comprometidos</span>
+                    <span style={{ color: '#f59e0b', fontSize: '0.72rem' }}>−{fmtK(m.gastosComprometidos)}</span>
                   </div>
                 )}
                 <div style={{ height: '1px', background: '#1a1a1a' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.25rem' }}>
-                  <span style={{ fontSize: '0.85rem', color: '#fff', fontWeight: 700 }}>Balance</span>
-                  <span style={{ fontWeight: 800, color: m.balance >= 0 ? '#10b981' : '#ef4444', fontSize: '1rem' }}>{fmtK(m.balance)}</span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.15rem' }}>
+                  <span style={{ fontSize: '0.82rem', color: '#fff', fontWeight: 700 }}>Balance</span>
+                  <span style={{ fontWeight: 800, color: m.balance >= 0 ? '#10b981' : '#ef4444', fontSize: '0.95rem' }}>{fmtK(m.balance)}</span>
                 </div>
               </div>
 
-              {/* Mini barra visual */}
-              {m.ingresosProyectados > 0 && (
-                <div style={{ marginTop: '0.75rem', height: '6px', background: '#1a1a1a', borderRadius: '999px', overflow: 'hidden' }}>
-                  <div style={{
-                    height: '100%',
-                    width: `${Math.min(100, (m.totalEgresos / m.ingresosProyectados) * 100)}%`,
-                    background: m.balance >= 0 ? '#10b981' : '#ef4444',
-                    borderRadius: '999px',
-                  }} />
+              {m.ingresosProyectados > 0 ? (
+                <div style={{ marginTop: '0.625rem', height: '5px', background: '#1a1a1a', borderRadius: '999px', overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${Math.min(100, (m.totalEgresos / m.ingresosProyectados) * 100)}%`, background: m.balance >= 0 ? '#10b981' : '#ef4444', borderRadius: '999px' }} />
                 </div>
-              )}
-              {m.ingresosProyectados === 0 && (
-                <div style={{ marginTop: '0.75rem', fontSize: '0.7rem', color: '#52525b' }}>
-                  Sin cobros registrados para este mes.
-                </div>
+              ) : (
+                <div style={{ marginTop: '0.5rem', fontSize: '0.65rem', color: '#52525b' }}>Sin cobros registrados.</div>
               )}
             </div>
           ))}
@@ -237,26 +264,15 @@ export const Finanzas: React.FC = () => {
         <h1 style={{ color: '#fff', fontWeight: 800, fontSize: '2rem' }}>Finanzas</h1>
       </header>
 
-      {/* Tab bar */}
       <div style={{ display: 'flex', gap: '0.375rem', background: '#111', padding: '0.25rem', borderRadius: '12px', width: 'fit-content' }}>
         {TABS.map(t => (
-          <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
-            style={{
-              padding: '0.5rem 1rem', borderRadius: '9px', fontSize: '0.82rem', fontWeight: 600,
-              border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-              background: tab === t.id ? '#fff' : 'transparent',
-              color: tab === t.id ? '#000' : '#71717a',
-              transition: 'all 0.15s',
-            }}
-          >
+          <button key={t.id} onClick={() => setTab(t.id)}
+            style={{ padding: '0.5rem 1rem', borderRadius: '9px', fontSize: '0.82rem', fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: tab === t.id ? '#fff' : 'transparent', color: tab === t.id ? '#000' : '#71717a', transition: 'all 0.15s' }}>
             {t.label}
           </button>
         ))}
       </div>
 
-      {/* Tab content */}
       {tab === 'movimientos' && <Movimientos />}
       {tab === 'proyeccion'  && <Proyeccion />}
       {tab === 'cuentas'     && <Cuentas />}

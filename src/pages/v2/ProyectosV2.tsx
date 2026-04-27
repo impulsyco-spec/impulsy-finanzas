@@ -1,8 +1,10 @@
 import React, { useState, useMemo } from 'react';
-import { ChevronDown, ChevronUp, CalendarPlus } from 'lucide-react';
+import { ChevronDown, ChevronUp, Plus, Pencil } from 'lucide-react';
 import { useSupabaseData } from '../../hooks/useSupabaseData';
 import { useLedger } from '../../hooks/useLedger';
 import { calcRentabilidad } from '../../hooks/useFinancials';
+import { AddProjectModal } from '../../components/AddProjectModal';
+import { EditProjectModal } from '../../components/EditProjectModal';
 import { supabase } from '../../lib/supabase';
 
 const fmt = (v: number) => '$' + Math.round(v).toLocaleString('es-CO');
@@ -54,6 +56,8 @@ export const ProyectosV2: React.FC = () => {
   const [markingId, setMarkingId] = useState<string | null>(null);
   const [confirmingPayment, setConfirmingPayment] = useState<any>(null);
   const [confirmAmount, setConfirmAmount] = useState('');
+  const [showAddProject, setShowAddProject] = useState(false);
+  const [editingProject, setEditingProject] = useState<any>(null);
 
   const rentabilidad = useMemo(() => calcRentabilidad(movements, projects, clients), [movements, projects, clients]);
   const rentMap = useMemo(() => Object.fromEntries(rentabilidad.map(r => [r.projectId, r])), [rentabilidad]);
@@ -101,6 +105,13 @@ export const ProyectosV2: React.FC = () => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
 
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h1 style={{ color: '#fff', fontWeight: 800, fontSize: '2rem' }}>Proyectos</h1>
+        <button className="btn btn-primary" onClick={() => setShowAddProject(true)} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.6rem 1.2rem' }}>
+          <Plus size={16} /> Nuevo Proyecto
+        </button>
+      </div>
+
       {/* KPIs */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '0.875rem' }}>
         {[
@@ -144,7 +155,11 @@ export const ProyectosV2: React.FC = () => {
                     </div>
                     <div style={{ color: '#71717a', fontSize: '0.8rem', marginTop: '0.15rem' }}>{client?.name}</div>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <button onClick={(e) => { e.stopPropagation(); setEditingProject(proj); }}
+                      style={{ background: 'none', border: 'none', color: '#52525b', cursor: 'pointer', padding: '0.3rem' }} title="Editar proyecto">
+                      <Pencil size={14} />
+                    </button>
                     <div style={{ textAlign: 'right' }}>
                       <div style={{ color: '#fff', fontWeight: 700 }}>{fmtK(proj.totalAmount)}</div>
                       {nextPayment && (
@@ -276,6 +291,25 @@ export const ProyectosV2: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Modal nuevo proyecto */}
+      <AddProjectModal
+        clients={clients}
+        isOpen={showAddProject}
+        onClose={() => setShowAddProject(false)}
+        onSuccess={() => { setShowAddProject(false); refetch(); }}
+      />
+
+      {/* Modal editar proyecto */}
+      {editingProject && (
+        <EditProjectModal
+          project={editingProject}
+          clients={clients}
+          isOpen={!!editingProject}
+          onClose={() => setEditingProject(null)}
+          onSuccess={() => { setEditingProject(null); refetch(); }}
+        />
+      )}
 
       {/* Modal confirmar pago */}
       {confirmingPayment && (

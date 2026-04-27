@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLedger } from '../../hooks/useLedger';
 import { calcKPIs, calcSemaforos } from '../../hooks/useFinancials';
@@ -11,21 +11,31 @@ const year = new Date().getFullYear();
 const SEM_COLORS: Record<string, string> = { verde: '#10b981', amarillo: '#f59e0b', rojo: '#ef4444' };
 const SEM_ICONS: Record<string, string>  = { verde: '🟢', amarillo: '🟡', rojo: '🔴' };
 
-const BarChart = ({ data, maxVal }: { data: { nombre: string; ing: number; gas: number; active: boolean }[]; maxVal: number }) => (
-  <div style={{ display: 'flex', gap: '4px', alignItems: 'flex-end', height: '140px', padding: '0 0.5rem' }}>
-    {data.map(d => (
-      <div key={d.nombre} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'center' }}>
-        <div style={{ display: 'flex', gap: '2px', alignItems: 'flex-end', height: '120px', width: '100%', justifyContent: 'center' }}>
-          <div style={{ width: '45%', background: '#10b981', height: `${Math.max((d.ing / maxVal) * 100, d.ing > 0 ? 2 : 0)}%`, borderRadius: '3px 3px 0 0', opacity: d.active ? 1 : 0.35, transition: 'height 0.4s' }}
-            title={`Ingresos: ${fmt(d.ing)}`} />
-          <div style={{ width: '45%', background: '#ef4444', height: `${Math.max((d.gas / maxVal) * 100, d.gas > 0 ? 2 : 0)}%`, borderRadius: '3px 3px 0 0', opacity: d.active ? 0.8 : 0.25, transition: 'height 0.4s' }}
-            title={`Gastos: ${fmt(d.gas)}`} />
+const BarChart = ({ data, maxVal }: { data: { nombre: string; ing: number; gas: number; active: boolean }[]; maxVal: number }) => {
+  const [hovered, setHovered] = useState<string | null>(null);
+  return (
+    <div style={{ display: 'flex', gap: '4px', alignItems: 'flex-end', height: '160px', padding: '0 0.5rem' }}>
+      {data.map(d => (
+        <div key={d.nombre} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'center', position: 'relative' }}
+          onMouseEnter={() => d.active && setHovered(d.nombre)} onMouseLeave={() => setHovered(null)}>
+          {hovered === d.nombre && (
+            <div style={{ position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)', background: '#1a1a1a', border: '1px solid #333', borderRadius: '8px', padding: '0.4rem 0.6rem', zIndex: 10, whiteSpace: 'nowrap', fontSize: '0.68rem', marginBottom: '4px', pointerEvents: 'none' }}>
+              <div style={{ color: '#fff', fontWeight: 700, marginBottom: '2px' }}>{d.nombre}</div>
+              <div style={{ color: '#10b981' }}>↑ {fmt(d.ing)}</div>
+              <div style={{ color: '#ef4444' }}>↓ {fmt(d.gas)}</div>
+              <div style={{ color: d.ing - d.gas >= 0 ? '#10b981' : '#ef4444', borderTop: '1px solid #333', marginTop: '2px', paddingTop: '2px', fontWeight: 700 }}>= {fmt(d.ing - d.gas)}</div>
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: '2px', alignItems: 'flex-end', height: '130px', width: '100%', justifyContent: 'center' }}>
+            <div style={{ width: '45%', background: '#10b981', height: `${Math.max((d.ing / maxVal) * 100, d.ing > 0 ? 2 : 0)}%`, borderRadius: '3px 3px 0 0', opacity: d.active ? 1 : 0.35, transition: 'height 0.4s' }} />
+            <div style={{ width: '45%', background: '#ef4444', height: `${Math.max((d.gas / maxVal) * 100, d.gas > 0 ? 2 : 0)}%`, borderRadius: '3px 3px 0 0', opacity: d.active ? 0.8 : 0.25, transition: 'height 0.4s' }} />
+          </div>
+          <div style={{ fontSize: '0.58rem', color: hovered === d.nombre ? '#fff' : d.active ? '#a0aec0' : '#3f3f46', textAlign: 'center', marginTop: '4px' }}>{d.nombre.slice(0, 3)}</div>
         </div>
-        <div style={{ fontSize: '0.58rem', color: d.active ? '#a0aec0' : '#3f3f46', textAlign: 'center', marginTop: '4px' }}>{d.nombre.slice(0, 3)}</div>
-      </div>
-    ))}
-  </div>
-);
+      ))}
+    </div>
+  );
+};
 
 export const Resumen: React.FC = () => {
   const { movements, realAccounts, debts, loading } = useLedger();

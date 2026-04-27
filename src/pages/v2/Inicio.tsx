@@ -17,20 +17,27 @@ const fmtK = (v: number) => {
 const SEM_COLOR: Record<string, string> = { verde: '#10b981', amarillo: '#f59e0b', rojo: '#ef4444' };
 const SEM_ICON: Record<string, string> = { verde: '🟢', amarillo: '🟡', rojo: '🔴' };
 
-// Simple bar chart — no library
+// Simple bar chart — no library, with hover tooltips
 const MiniBar = ({ data }: { data: { label: string; ing: number; gas: number }[] }) => {
   const max = Math.max(...data.flatMap(d => [d.ing, d.gas]), 1);
+  const [hovered, setHovered] = React.useState<string | null>(null);
   return (
-    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end', height: '100px' }}>
+    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end', height: '130px' }}>
       {data.map(d => (
-        <div key={d.label} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'center' }}>
-          <div style={{ display: 'flex', gap: '2px', alignItems: 'flex-end', height: '84px' }}>
-            <div title={`Ingresos: ${fmt(d.ing)}`}
-              style={{ width: '12px', background: '#10b981', height: `${Math.max((d.ing / max) * 100, d.ing > 0 ? 2 : 0)}%`, borderRadius: '3px 3px 0 0', transition: 'height 0.4s' }} />
-            <div title={`Gastos: ${fmt(d.gas)}`}
-              style={{ width: '12px', background: '#ef4444', height: `${Math.max((d.gas / max) * 100, d.gas > 0 ? 2 : 0)}%`, borderRadius: '3px 3px 0 0', opacity: 0.7, transition: 'height 0.4s' }} />
+        <div key={d.label} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'center', position: 'relative' }}
+          onMouseEnter={() => setHovered(d.label)} onMouseLeave={() => setHovered(null)}>
+          {hovered === d.label && (d.ing > 0 || d.gas > 0) && (
+            <div style={{ position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)', background: '#1a1a1a', border: '1px solid #333', borderRadius: '8px', padding: '0.4rem 0.6rem', zIndex: 10, whiteSpace: 'nowrap', fontSize: '0.68rem', marginBottom: '4px', pointerEvents: 'none' }}>
+              {d.ing > 0 && <div style={{ color: '#10b981' }}>↑ {fmt(d.ing)}</div>}
+              {d.gas > 0 && <div style={{ color: '#ef4444' }}>↓ {fmt(d.gas)}</div>}
+              {d.ing > 0 && d.gas > 0 && <div style={{ color: d.ing - d.gas >= 0 ? '#10b981' : '#ef4444', borderTop: '1px solid #333', marginTop: '2px', paddingTop: '2px', fontWeight: 700 }}>= {fmt(d.ing - d.gas)}</div>}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: '2px', alignItems: 'flex-end', height: '100px' }}>
+            <div style={{ width: '12px', background: '#10b981', height: `${Math.max((d.ing / max) * 100, d.ing > 0 ? 2 : 0)}%`, borderRadius: '3px 3px 0 0', transition: 'height 0.4s' }} />
+            <div style={{ width: '12px', background: '#ef4444', height: `${Math.max((d.gas / max) * 100, d.gas > 0 ? 2 : 0)}%`, borderRadius: '3px 3px 0 0', opacity: 0.8, transition: 'height 0.4s' }} />
           </div>
-          <div style={{ fontSize: '0.6rem', color: '#52525b', marginTop: '4px' }}>{d.label}</div>
+          <div style={{ fontSize: '0.6rem', color: hovered === d.label ? '#a0aec0' : '#52525b', marginTop: '4px' }}>{d.label}</div>
         </div>
       ))}
     </div>
