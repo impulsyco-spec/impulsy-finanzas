@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, Pencil, Check, X } from 'lucide-react';
 import { Movimientos } from '../Movimientos';
 import { Cuentas } from '../Cuentas';
 import { Deudas } from '../Deudas';
@@ -28,7 +28,7 @@ const ESCENARIOS = [
 ];
 
 const emptyRecurring: Omit<RecurringExpense, 'id'> = {
-  nombre: '', valor: 0, categoria: 'Infraestructura', diaCobro: 1, activo: true, duracionMeses: 0,
+  nombre: '', valor: 0, categoria: 'Infraestructura', diaCobro: 1, activo: true, duracionMeses: 0, fechaInicio: '',
 };
 
 const inp: React.CSSProperties = {
@@ -43,11 +43,13 @@ const lbl: React.CSSProperties = {
 const Proyeccion: React.FC = () => {
   const { movements, debts } = useLedger();
   const { payments } = useSupabaseData();
-  const { items: recurring, add, remove, update, totalMensual } = useRecurring();
+  const { items: recurring, add, remove, update, updateAndSync, totalMensual } = useRecurring();
   const [showAdd, setShowAdd] = useState(false);
   const [saving, setSaving] = useState(false);
   const [numMeses, setNumMeses] = useState(3);
   const [form, setForm] = useState<Omit<RecurringExpense, 'id'>>({ ...emptyRecurring });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<Partial<RecurringExpense>>({});
 
   const fmtInput = (v: string) => v.replace(/\D/g, '').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 
@@ -63,8 +65,9 @@ const Proyeccion: React.FC = () => {
       .filter(p => p.status === 'pending' && p.date.startsWith(ms))
       .reduce((s, p) => s + p.amount, 0);
 
+    // Excluir movimientos recurring (ya contados en gastos fijos)
     const gastosComprometidos = movements
-      .filter(m => m.naturaleza === 'egreso' && m.estado === 'esperado' && m.fecha.startsWith(ms))
+      .filter(m => m.naturaleza === 'egreso' && m.estado === 'esperado' && m.fecha.startsWith(ms) && !m.notas?.startsWith('recurring:'))
       .reduce((s, m) => s + m.valor, 0);
 
     const totalEgresos = totalMensual + totalDeudas + gastosComprometidos;
@@ -131,16 +134,57 @@ const Proyeccion: React.FC = () => {
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginBottom: '0.875rem' }}>
-          {recurring.map(r => (
+          {recurring.map(r => editingId === r.id ? (
+            /* ── Fila de edición inline ── */
+            <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr auto', gap: '0.4rem', alignItems: 'flex-end', padding: '0.6rem 0.75rem', background: '#111', borderRadius: '8px', border: '1px solid #2a2a2a' }}>
+              <div>
+                <label style={lbl}>Nombre</label>
+                <input style={inp} value={editForm.nombre ?? ''} onChange={e => setEditForm(f => ({ ...f, nombre: e.target.value }))} />
+              </div>
+              <div>
+                <label style={lbl}>Valor COP</label>
+                <input style={inp} type="text" inputMode="numeric"
+                  value={editForm.valor !== undefined ? String(editForm.valor).replace(/\B(?=(\d{3})+(?!\d))/g, '.') : ''}
+                  onChange={e => setEditForm(f => ({ ...f, valor: Number(e.target.value.replace(/\./g, '')) || 0 }))} />
+              </div>
+              <div>
+                <label style={lbl}>Categoría</label>
+                <select style={inp} value={editForm.categoria ?? ''} onChange={e => setEditForm(f => ({ ...f, categoria: e.target.value }))}>
+                  {CATS_EGRESO.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={lbl}>Día cobro</label>
+                <input style={inp} type="number" min={1} max={31} value={editForm.diaCobro ?? 1}
+                  onChange={e => setEditForm(f => ({ ...f, diaCobro: Number(e.target.value) }))} />
+              </div>
+              <div style={{ display: 'flex', gap: '0.3rem' }}>
+                <button className="btn btn-primary" style={{ padding: '0.4rem 0.6rem', fontSize: '0.75rem' }}
+                  onClick={async () => { await updateAndSync(r.id, editForm); setEditingId(null); }}>
+                  <Check size={13} />
+                </button>
+                <button className="btn btn-outline" style={{ padding: '0.4rem 0.6rem', fontSize: '0.75rem' }}
+                  onClick={() => setEditingId(null)}>
+                  <X size={13} />
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* ── Fila de visualización ── */
             <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.75rem', background: r.activo ? '#0d0d0d' : '#0a0a0a', borderRadius: '8px', opacity: r.activo ? 1 : 0.5 }}>
               <input type="checkbox" checked={r.activo} onChange={() => update(r.id, { activo: !r.activo })}
                 style={{ width: '14px', height: '14px', accentColor: '#10b981', flexShrink: 0 }} />
               <span style={{ flex: 1, color: '#a0aec0', fontSize: '0.82rem' }}>{r.nombre}</span>
               <span style={{ fontSize: '0.7rem', color: '#52525b' }}>{r.categoria}</span>
               <span style={{ fontSize: '0.7rem', color: '#52525b' }}>Día {r.diaCobro}</span>
-              {r.duracionMeses > 0 && <span style={{ fontSize: '0.68rem', color: '#52525b' }}>{r.duracionMeses} meses</span>}
+              {r.duracionMeses > 0 && <span style={{ fontSize: '0.68rem', color: '#52525b' }}>{r.duracionMeses} m</span>}
+              {r.fechaInicio && <span style={{ fontSize: '0.65rem', color: '#3f3f46' }}>desde {r.fechaInicio.slice(0, 7)}</span>}
               <span style={{ fontWeight: 700, color: '#ef4444', fontSize: '0.85rem', minWidth: '80px', textAlign: 'right' }}>{fmt(r.valor)}</span>
-              <button onClick={() => remove(r.id)} style={{ background: 'none', border: 'none', color: '#52525b', cursor: 'pointer', padding: '0.25rem' }} title="Eliminar (solo borra los no pagados)">
+              <button onClick={() => { setEditingId(r.id); setEditForm({ nombre: r.nombre, valor: r.valor, categoria: r.categoria, diaCobro: r.diaCobro }); }}
+                style={{ background: 'none', border: 'none', color: '#52525b', cursor: 'pointer', padding: '0.25rem' }} title="Editar">
+                <Pencil size={13} />
+              </button>
+              <button onClick={() => remove(r.id)} style={{ background: 'none', border: 'none', color: '#52525b', cursor: 'pointer', padding: '0.25rem' }} title="Eliminar">
                 <Trash2 size={13} />
               </button>
             </div>
@@ -165,36 +209,43 @@ const Proyeccion: React.FC = () => {
         </div>
 
         {showAdd ? (
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr auto', gap: '0.5rem', alignItems: 'flex-end', padding: '0.75rem', background: '#0a0a0a', borderRadius: '10px' }}>
-            <div>
-              <label style={lbl}>Nombre</label>
-              <input style={inp} value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} placeholder="Ej. Arriendo oficina" />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', padding: '0.75rem', background: '#0a0a0a', borderRadius: '10px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr 1fr', gap: '0.5rem', alignItems: 'flex-end' }}>
+              <div>
+                <label style={lbl}>Nombre</label>
+                <input style={inp} value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} placeholder="Ej. Arriendo oficina" />
+              </div>
+              <div>
+                <label style={lbl}>Valor COP</label>
+                <input style={inp} type="text" inputMode="numeric"
+                  value={typeof form.valor === 'number' && form.valor === 0 ? '' : String(form.valor)}
+                  onChange={e => setForm(f => ({ ...f, valor: fmtInput(e.target.value) as any }))}
+                  placeholder="0" />
+              </div>
+              <div>
+                <label style={lbl}>Categoría</label>
+                <select style={inp} value={form.categoria} onChange={e => setForm(f => ({ ...f, categoria: e.target.value }))}>
+                  {CATS_EGRESO.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={lbl}>Día de cobro</label>
+                <input style={inp} type="number" min={1} max={31} value={form.diaCobro}
+                  onChange={e => setForm(f => ({ ...f, diaCobro: Number(e.target.value) }))} />
+              </div>
+              <div>
+                <label style={lbl}>Primer pago (fecha)</label>
+                <input style={inp} type="date" value={form.fechaInicio ?? ''}
+                  onChange={e => setForm(f => ({ ...f, fechaInicio: e.target.value }))} />
+              </div>
+              <div>
+                <label style={lbl}>Plazo (meses, 0=indefinido)</label>
+                <input style={inp} type="number" min={0} max={60} value={form.duracionMeses}
+                  onChange={e => setForm(f => ({ ...f, duracionMeses: Number(e.target.value) }))}
+                  placeholder="0" />
+              </div>
             </div>
-            <div>
-              <label style={lbl}>Valor COP</label>
-              <input style={inp} type="text" inputMode="numeric"
-                value={typeof form.valor === 'number' && form.valor === 0 ? '' : String(form.valor)}
-                onChange={e => setForm(f => ({ ...f, valor: fmtInput(e.target.value) as any }))}
-                placeholder="0" />
-            </div>
-            <div>
-              <label style={lbl}>Categoría</label>
-              <select style={inp} value={form.categoria} onChange={e => setForm(f => ({ ...f, categoria: e.target.value }))}>
-                {CATS_EGRESO.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-            <div>
-              <label style={lbl}>Día cobro</label>
-              <input style={inp} type="number" min={1} max={31} value={form.diaCobro}
-                onChange={e => setForm(f => ({ ...f, diaCobro: Number(e.target.value) }))} />
-            </div>
-            <div>
-              <label style={lbl}>Plazo (meses, 0=indefinido)</label>
-              <input style={inp} type="number" min={0} max={60} value={form.duracionMeses}
-                onChange={e => setForm(f => ({ ...f, duracionMeses: Number(e.target.value) }))}
-                placeholder="0" />
-            </div>
-            <div style={{ display: 'flex', gap: '0.4rem' }}>
+            <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end' }}>
               <button className="btn btn-primary" onClick={handleAdd} disabled={saving} style={{ padding: '0.5rem 0.75rem', fontSize: '0.8rem' }}>
                 {saving ? '...' : 'Guardar'}
               </button>
