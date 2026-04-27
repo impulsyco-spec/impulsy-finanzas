@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { MESES_ES } from '../types';
 
@@ -18,7 +18,6 @@ const KEY = 'impulsy_recurring_v2';
 export function useRecurring() {
   const [items, setItems] = useState<RecurringExpense[]>(() => {
     try {
-      // Migrar desde v1 si existe
       const v1 = localStorage.getItem('impulsy_recurring_v1');
       const v2 = localStorage.getItem(KEY);
       if (v2) return JSON.parse(v2);
@@ -31,6 +30,41 @@ export function useRecurring() {
     } catch { return []; }
   });
 
+  // Al montar: borra movimientos huérfanos (recurring eliminados que dejaron esperados)
+  useEffect(() => {
+    const cleanupOrphans = async () => {
+      try {
+        const stored = localStorage.getItem(KEY);
+        const currentIds = new Set<string>(
+          stored ? JSON.parse(stored).map((i: RecurringExpense) => i.id) : []
+        );
+
+        const { data } = await supabase
+          .from('ledger_movements')
+          .select('id, notas')
+          .eq('estado', 'esperado')
+          .like('notas', 'recurring:%');
+
+        if (!data?.length) return;
+
+        const orphanIds = data
+          .filter(m => {
+            const rid = m.notas?.replace('recurring:', '');
+            return rid && !currentIds.has(rid);
+          })
+          .map(m => m.id);
+
+        if (orphanIds.length > 0) {
+          await supabase.from('ledger_movements').delete().in('id', orphanIds);
+          console.log(`useRecurring: ${orphanIds.length} movimientos huérfanos eliminados`);
+        }
+      } catch (e) {
+        console.error('useRecurring cleanup:', e);
+      }
+    };
+    cleanupOrphans();
+  }, []); // solo al montar
+
   const persist = (next: RecurringExpense[]) => {
     setItems(next);
     localStorage.setItem(KEY, JSON.stringify(next));
@@ -40,7 +74,6 @@ export function useRecurring() {
     const id = crypto.randomUUID();
     persist([...items, { ...item, id }]);
 
-    // Usar fechaInicio si se especificó, si no, el mes actual
     const base = item.fechaInicio
       ? new Date(item.fechaInicio + 'T12:00:00')
       : new Date();
@@ -49,39 +82,35 @@ export function useRecurring() {
     for (let i = 0; i < mesesACrear; i++) {
       const d = new Date(base.getFullYear(), base.getMonth() + i, item.diaCobro);
       const fecha = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      try {
-        await supabase.from('ledger_movements').insert({
-          fecha,
-          tipo_movimiento: 'egreso_operativo',
-          naturaleza: 'egreso',
-          descripcion: item.nombre,
-          valor: item.valor,
-          categoria: item.categoria,
-          estado: 'esperado',
-          notas: `recurring:${id}`,
-          mes: MESES_ES[d.getMonth()],
-          personal_flag: false,
-        });
-      } catch { /* silencio si falla un mes */ }
+      const { error } = await supabase.from('ledger_movements').insert({
+        fecha,
+        tipo_movimiento: 'egreso_operativo',
+        naturaleza: 'egreso',
+        descripcion: item.nombre,
+        valor: item.valor,
+        categoria: item.categoria,
+        estado: 'esperado',
+        notas: `recurring:${id}`,
+        mes: MESES_ES[d.getMonth()],
+        personal_flag: false,
+      });
+      if (error) console.error('useRecurring add insert error:', error.message);
     }
   };
 
   const remove = async (id: string) => {
     persist(items.filter(i => i.id !== id));
-    // Eliminar solo los movimientos NO pagados (esperado) de este recurrente
-    try {
-      await supabase
-        .from('ledger_movements')
-        .delete()
-        .eq('estado', 'esperado')
-        .like('notas', `recurring:${id}%`);
-    } catch { /* tabla puede no existir */ }
+    const { error } = await supabase
+      .from('ledger_movements')
+      .delete()
+      .eq('estado', 'esperado')
+      .like('notas', `recurring:${id}%`);
+    if (error) console.error('useRecurring remove error:', error.message);
   };
 
   const update = (id: string, changes: Partial<RecurringExpense>) =>
     persist(items.map(i => i.id === id ? { ...i, ...changes } : i));
 
-  // Edita y sincroniza los movimientos pendientes en Supabase
   const updateAndSync = async (id: string, changes: Partial<RecurringExpense>) => {
     persist(items.map(i => i.id === id ? { ...i, ...changes } : i));
     const patch: Record<string, unknown> = {};
@@ -89,13 +118,12 @@ export function useRecurring() {
     if (changes.valor     !== undefined) patch.valor       = changes.valor;
     if (changes.categoria !== undefined) patch.categoria   = changes.categoria;
     if (Object.keys(patch).length > 0) {
-      try {
-        await supabase
-          .from('ledger_movements')
-          .update(patch)
-          .eq('estado', 'esperado')
-          .like('notas', `recurring:${id}%`);
-      } catch { /* silencio */ }
+      const { error } = await supabase
+        .from('ledger_movements')
+        .update(patch)
+        .eq('estado', 'esperado')
+        .like('notas', `recurring:${id}%`);
+      if (error) console.error('useRecurring updateAndSync error:', error.message);
     }
   };
 
