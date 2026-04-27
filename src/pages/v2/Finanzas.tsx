@@ -27,9 +27,11 @@ const ESCENARIOS = [
   { label: '1 año',  value: 12 },
 ];
 
-const emptyRecurring: Omit<RecurringExpense, 'id'> = {
-  nombre: '', valor: 0, categoria: 'Infraestructura', diaCobro: 1, activo: true, duracionMeses: 0, fechaInicio: '',
-};
+// fechaInicio se inicializa dinámicamente en el componente
+const mkEmpty = (): Omit<RecurringExpense, 'id'> => ({
+  nombre: '', valor: 0, categoria: 'Infraestructura', activo: true,
+  duracionMeses: 6, fechaInicio: new Date().toISOString().split('T')[0],
+});
 
 const inp: React.CSSProperties = {
   background: '#1a1a1a', border: '1px solid #333', color: '#fff',
@@ -47,7 +49,7 @@ const Proyeccion: React.FC = () => {
   const [showAdd, setShowAdd] = useState(false);
   const [saving, setSaving] = useState(false);
   const [numMeses, setNumMeses] = useState(3);
-  const [form, setForm] = useState<Omit<RecurringExpense, 'id'>>({ ...emptyRecurring });
+  const [form, setForm] = useState<Omit<RecurringExpense, 'id'>>(mkEmpty);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Partial<RecurringExpense>>({});
 
@@ -84,13 +86,14 @@ const Proyeccion: React.FC = () => {
   });
 
   const handleAdd = async () => {
-    if (!form.nombre.trim() || !form.valor || Number(String(form.valor).replace(/\./g, '')) <= 0) {
-      alert('Ingresa nombre y valor'); return;
-    }
+    if (!form.nombre.trim()) { alert('Ingresa el nombre del gasto'); return; }
+    if (!form.fechaInicio)   { alert('Selecciona la fecha del primer pago'); return; }
+    const valor = Number(String(form.valor).replace(/\./g, ''));
+    if (valor <= 0) { alert('Ingresa un valor mayor a 0'); return; }
     setSaving(true);
     try {
-      await add({ ...form, valor: Number(String(form.valor).replace(/\./g, '')) });
-      setForm({ ...emptyRecurring });
+      await add({ ...form, valor });
+      setForm(mkEmpty());
       setShowAdd(false);
     } finally { setSaving(false); }
   };
@@ -136,38 +139,50 @@ const Proyeccion: React.FC = () => {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginBottom: '0.875rem' }}>
           {recurring.map(r => editingId === r.id ? (
             /* ── Fila de edición inline ── */
-            <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr auto', gap: '0.4rem', alignItems: 'flex-end', padding: '0.6rem 0.75rem', background: '#111', borderRadius: '8px', border: '1px solid #2a2a2a' }}>
-              <div>
-                <label style={lbl}>Nombre</label>
-                <input style={inp} value={editForm.nombre ?? ''} onChange={e => setEditForm(f => ({ ...f, nombre: e.target.value }))} />
+            <div key={r.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', padding: '0.75rem', background: '#111', borderRadius: '8px', border: '1px solid #2a2a2a' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr auto', gap: '0.4rem', alignItems: 'flex-end' }}>
+                <div>
+                  <label style={lbl}>Nombre</label>
+                  <input style={inp} value={editForm.nombre ?? ''} onChange={e => setEditForm(f => ({ ...f, nombre: e.target.value }))} />
+                </div>
+                <div>
+                  <label style={lbl}>Valor COP</label>
+                  <input style={inp} type="text" inputMode="numeric"
+                    value={editForm.valor !== undefined ? String(editForm.valor).replace(/\B(?=(\d{3})+(?!\d))/g, '.') : ''}
+                    onChange={e => setEditForm(f => ({ ...f, valor: Number(e.target.value.replace(/\./g, '')) || 0 }))} />
+                </div>
+                <div>
+                  <label style={lbl}>Categoría</label>
+                  <select style={inp} value={editForm.categoria ?? ''} onChange={e => setEditForm(f => ({ ...f, categoria: e.target.value }))}>
+                    {CATS_EGRESO.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={lbl}>Primer pago</label>
+                  <input style={inp} type="date" value={editForm.fechaInicio ?? r.fechaInicio}
+                    onChange={e => setEditForm(f => ({ ...f, fechaInicio: e.target.value }))} />
+                </div>
+                <div>
+                  <label style={lbl}>Cuotas (meses)</label>
+                  <input style={inp} type="number" min={1} max={60} value={editForm.duracionMeses ?? r.duracionMeses}
+                    onChange={e => setEditForm(f => ({ ...f, duracionMeses: Number(e.target.value) }))} />
+                </div>
+                <div style={{ display: 'flex', gap: '0.3rem' }}>
+                  <button className="btn btn-primary" style={{ padding: '0.4rem 0.6rem', fontSize: '0.75rem' }}
+                    onClick={async () => { await updateAndSync(r.id, editForm); setEditingId(null); setEditForm({}); }}>
+                    <Check size={13} />
+                  </button>
+                  <button className="btn btn-outline" style={{ padding: '0.4rem 0.6rem', fontSize: '0.75rem' }}
+                    onClick={() => { setEditingId(null); setEditForm({}); }}>
+                    <X size={13} />
+                  </button>
+                </div>
               </div>
-              <div>
-                <label style={lbl}>Valor COP</label>
-                <input style={inp} type="text" inputMode="numeric"
-                  value={editForm.valor !== undefined ? String(editForm.valor).replace(/\B(?=(\d{3})+(?!\d))/g, '.') : ''}
-                  onChange={e => setEditForm(f => ({ ...f, valor: Number(e.target.value.replace(/\./g, '')) || 0 }))} />
-              </div>
-              <div>
-                <label style={lbl}>Categoría</label>
-                <select style={inp} value={editForm.categoria ?? ''} onChange={e => setEditForm(f => ({ ...f, categoria: e.target.value }))}>
-                  {CATS_EGRESO.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={lbl}>Día cobro</label>
-                <input style={inp} type="number" min={1} max={31} value={editForm.diaCobro ?? 1}
-                  onChange={e => setEditForm(f => ({ ...f, diaCobro: Number(e.target.value) }))} />
-              </div>
-              <div style={{ display: 'flex', gap: '0.3rem' }}>
-                <button className="btn btn-primary" style={{ padding: '0.4rem 0.6rem', fontSize: '0.75rem' }}
-                  onClick={async () => { await updateAndSync(r.id, editForm); setEditingId(null); }}>
-                  <Check size={13} />
-                </button>
-                <button className="btn btn-outline" style={{ padding: '0.4rem 0.6rem', fontSize: '0.75rem' }}
-                  onClick={() => setEditingId(null)}>
-                  <X size={13} />
-                </button>
-              </div>
+              {(editForm.fechaInicio || editForm.duracionMeses) && (
+                <div style={{ fontSize: '0.65rem', color: '#f59e0b', paddingLeft: '0.25rem' }}>
+                  ⚠️ Cambiar fecha o cuotas eliminará los movimientos actuales y los recreará desde la nueva fecha.
+                </div>
+              )}
             </div>
           ) : (
             /* ── Fila de visualización ── */
@@ -176,11 +191,16 @@ const Proyeccion: React.FC = () => {
                 style={{ width: '14px', height: '14px', accentColor: '#10b981', flexShrink: 0 }} />
               <span style={{ flex: 1, color: '#a0aec0', fontSize: '0.82rem' }}>{r.nombre}</span>
               <span style={{ fontSize: '0.7rem', color: '#52525b' }}>{r.categoria}</span>
-              <span style={{ fontSize: '0.7rem', color: '#52525b' }}>Día {r.diaCobro}</span>
-              {r.duracionMeses > 0 && <span style={{ fontSize: '0.68rem', color: '#52525b' }}>{r.duracionMeses} m</span>}
-              {r.fechaInicio && <span style={{ fontSize: '0.65rem', color: '#3f3f46' }}>desde {r.fechaInicio.slice(0, 7)}</span>}
+              {r.fechaInicio && (
+                <span style={{ fontSize: '0.68rem', color: '#52525b' }}>
+                  {new Date(r.fechaInicio + 'T12:00:00').toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: '2-digit' })}
+                </span>
+              )}
+              {r.duracionMeses > 0 && (
+                <span style={{ fontSize: '0.68rem', color: '#52525b' }}>{r.duracionMeses} cuotas</span>
+              )}
               <span style={{ fontWeight: 700, color: '#ef4444', fontSize: '0.85rem', minWidth: '80px', textAlign: 'right' }}>{fmt(r.valor)}</span>
-              <button onClick={() => { setEditingId(r.id); setEditForm({ nombre: r.nombre, valor: r.valor, categoria: r.categoria, diaCobro: r.diaCobro }); }}
+              <button onClick={() => { setEditingId(r.id); setEditForm({ nombre: r.nombre, valor: r.valor, categoria: r.categoria, fechaInicio: r.fechaInicio, duracionMeses: r.duracionMeses }); }}
                 style={{ background: 'none', border: 'none', color: '#52525b', cursor: 'pointer', padding: '0.25rem' }} title="Editar">
                 <Pencil size={13} />
               </button>
@@ -210,9 +230,9 @@ const Proyeccion: React.FC = () => {
 
         {showAdd ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', padding: '0.75rem', background: '#0a0a0a', borderRadius: '10px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr 1fr', gap: '0.5rem', alignItems: 'flex-end' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr', gap: '0.5rem', alignItems: 'flex-end' }}>
               <div>
-                <label style={lbl}>Nombre</label>
+                <label style={lbl}>Nombre del gasto</label>
                 <input style={inp} value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} placeholder="Ej. Arriendo oficina" />
               </div>
               <div>
@@ -229,21 +249,19 @@ const Proyeccion: React.FC = () => {
                 </select>
               </div>
               <div>
-                <label style={lbl}>Día de cobro</label>
-                <input style={inp} type="number" min={1} max={31} value={form.diaCobro}
-                  onChange={e => setForm(f => ({ ...f, diaCobro: Number(e.target.value) }))} />
-              </div>
-              <div>
-                <label style={lbl}>Primer pago (fecha)</label>
-                <input style={inp} type="date" value={form.fechaInicio ?? ''}
+                <label style={lbl}>Fecha primer pago</label>
+                <input style={inp} type="date" value={form.fechaInicio}
                   onChange={e => setForm(f => ({ ...f, fechaInicio: e.target.value }))} />
               </div>
               <div>
-                <label style={lbl}>Plazo (meses, 0=indefinido)</label>
-                <input style={inp} type="number" min={0} max={60} value={form.duracionMeses}
+                <label style={lbl}>Cuotas (núm. de meses)</label>
+                <input style={inp} type="number" min={1} max={60} value={form.duracionMeses}
                   onChange={e => setForm(f => ({ ...f, duracionMeses: Number(e.target.value) }))}
-                  placeholder="0" />
+                  placeholder="6" />
               </div>
+            </div>
+            <div style={{ fontSize: '0.65rem', color: '#52525b', paddingLeft: '0.1rem' }}>
+              El día del mes se toma automáticamente de la fecha seleccionada y se repite en cada cuota.
             </div>
             <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end' }}>
               <button className="btn btn-primary" onClick={handleAdd} disabled={saving} style={{ padding: '0.5rem 0.75rem', fontSize: '0.8rem' }}>

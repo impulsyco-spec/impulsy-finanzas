@@ -7,38 +7,77 @@ export interface RecurringExpense {
   nombre: string;
   valor: number;
   categoria: string;
-  diaCobro: number;
   activo: boolean;
-  duracionMeses: number; // 0 = indefinido (se crean 6 meses por defecto), N = plazo exacto
-  fechaInicio?: string;  // YYYY-MM-DD — mes desde donde se crean los movimientos
+  duracionMeses: number; // número exacto de cuotas (0 = 6 por defecto)
+  fechaInicio: string;   // YYYY-MM-DD — primer pago; el día se reutiliza cada mes
 }
 
-const KEY = 'impulsy_recurring_v2';
+const KEY = 'impulsy_recurring_v3';
+
+// Crea los movimientos en Supabase para un gasto recurrente dado
+async function createMovements(id: string, item: Omit<RecurringExpense, 'id'>) {
+  const base = new Date(item.fechaInicio + 'T12:00:00');
+  const dia  = base.getDate(); // día del mes extraído de fechaInicio
+  const n    = item.duracionMeses > 0 ? item.duracionMeses : 6;
+
+  for (let i = 0; i < n; i++) {
+    const d     = new Date(base.getFullYear(), base.getMonth() + i, dia);
+    const fecha = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const { error } = await supabase.from('ledger_movements').insert({
+      fecha,
+      tipo_movimiento: 'egreso_operativo',
+      naturaleza:      'egreso',
+      descripcion:     item.nombre,
+      valor:           item.valor,
+      categoria:       item.categoria,
+      estado:          'esperado',
+      notas:           `recurring:${id}`,
+      mes:             MESES_ES[d.getMonth()],
+      personal_flag:   false,
+    });
+    if (error) console.error('useRecurring createMovements:', error.message);
+  }
+}
+
+// Borra todos los movimientos esperados de un gasto recurrente
+async function deleteMovements(id: string) {
+  const { error } = await supabase
+    .from('ledger_movements')
+    .delete()
+    .eq('estado', 'esperado')
+    .like('notas', `recurring:${id}%`);
+  if (error) console.error('useRecurring deleteMovements:', error.message);
+}
 
 export function useRecurring() {
   const [items, setItems] = useState<RecurringExpense[]>(() => {
     try {
-      const v1 = localStorage.getItem('impulsy_recurring_v1');
-      const v2 = localStorage.getItem(KEY);
-      if (v2) return JSON.parse(v2);
-      if (v1) {
-        const migrated = JSON.parse(v1).map((i: any) => ({ ...i, duracionMeses: 0 }));
-        localStorage.setItem(KEY, JSON.stringify(migrated));
-        return migrated;
-      }
-      return [];
+      // Migrar datos de versiones anteriores (v1, v2) → v3
+      const raw = localStorage.getItem(KEY)
+        ?? localStorage.getItem('impulsy_recurring_v2')
+        ?? localStorage.getItem('impulsy_recurring_v1');
+      if (!raw) return [];
+      return JSON.parse(raw).map((i: any) => ({
+        id:            i.id,
+        nombre:        i.nombre,
+        valor:         i.valor,
+        categoria:     i.categoria ?? 'Infraestructura',
+        activo:        i.activo ?? true,
+        duracionMeses: i.duracionMeses ?? 0,
+        // fechaInicio: si no existe en el item antiguo, queda vacío (se manejará como legacy)
+        fechaInicio:   i.fechaInicio ?? '',
+      }));
     } catch { return []; }
   });
 
-  // Al montar: borra movimientos huérfanos (recurring eliminados que dejaron esperados)
+  // Al montar: eliminar movimientos huérfanos (gastos borrados que dejaron esperados)
   useEffect(() => {
-    const cleanupOrphans = async () => {
+    const cleanup = async () => {
       try {
-        const stored = localStorage.getItem(KEY);
-        const currentIds = new Set<string>(
+        const stored  = localStorage.getItem(KEY);
+        const validIds = new Set<string>(
           stored ? JSON.parse(stored).map((i: RecurringExpense) => i.id) : []
         );
-
         const { data } = await supabase
           .from('ledger_movements')
           .select('id, notas')
@@ -46,84 +85,67 @@ export function useRecurring() {
           .like('notas', 'recurring:%');
 
         if (!data?.length) return;
-
-        const orphanIds = data
-          .filter(m => {
-            const rid = m.notas?.replace('recurring:', '');
-            return rid && !currentIds.has(rid);
-          })
+        const orphans = data
+          .filter(m => !validIds.has(m.notas?.replace('recurring:', '') ?? ''))
           .map(m => m.id);
-
-        if (orphanIds.length > 0) {
-          await supabase.from('ledger_movements').delete().in('id', orphanIds);
-          console.log(`useRecurring: ${orphanIds.length} movimientos huérfanos eliminados`);
+        if (orphans.length > 0) {
+          await supabase.from('ledger_movements').delete().in('id', orphans);
+          console.log(`useRecurring: ${orphans.length} huérfanos eliminados`);
         }
-      } catch (e) {
-        console.error('useRecurring cleanup:', e);
-      }
+      } catch (e) { console.error('useRecurring cleanup:', e); }
     };
-    cleanupOrphans();
-  }, []); // solo al montar
+    cleanup();
+  }, []);
 
   const persist = (next: RecurringExpense[]) => {
     setItems(next);
     localStorage.setItem(KEY, JSON.stringify(next));
   };
 
+  // ── Agregar ────────────────────────────────────────────────
   const add = async (item: Omit<RecurringExpense, 'id'>) => {
     const id = crypto.randomUUID();
     persist([...items, { ...item, id }]);
-
-    const base = item.fechaInicio
-      ? new Date(item.fechaInicio + 'T12:00:00')
-      : new Date();
-    const mesesACrear = item.duracionMeses > 0 ? item.duracionMeses : 6;
-
-    for (let i = 0; i < mesesACrear; i++) {
-      const d = new Date(base.getFullYear(), base.getMonth() + i, item.diaCobro);
-      const fecha = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      const { error } = await supabase.from('ledger_movements').insert({
-        fecha,
-        tipo_movimiento: 'egreso_operativo',
-        naturaleza: 'egreso',
-        descripcion: item.nombre,
-        valor: item.valor,
-        categoria: item.categoria,
-        estado: 'esperado',
-        notas: `recurring:${id}`,
-        mes: MESES_ES[d.getMonth()],
-        personal_flag: false,
-      });
-      if (error) console.error('useRecurring add insert error:', error.message);
-    }
+    await createMovements(id, item);
   };
 
+  // ── Eliminar ───────────────────────────────────────────────
   const remove = async (id: string) => {
     persist(items.filter(i => i.id !== id));
-    const { error } = await supabase
-      .from('ledger_movements')
-      .delete()
-      .eq('estado', 'esperado')
-      .like('notas', `recurring:${id}%`);
-    if (error) console.error('useRecurring remove error:', error.message);
+    await deleteMovements(id);
   };
 
+  // ── Actualizar solo el flag activo (sin tocar Supabase) ────
   const update = (id: string, changes: Partial<RecurringExpense>) =>
     persist(items.map(i => i.id === id ? { ...i, ...changes } : i));
 
+  // ── Editar con sincronización completa ────────────────────
   const updateAndSync = async (id: string, changes: Partial<RecurringExpense>) => {
-    persist(items.map(i => i.id === id ? { ...i, ...changes } : i));
-    const patch: Record<string, unknown> = {};
-    if (changes.nombre    !== undefined) patch.descripcion = changes.nombre;
-    if (changes.valor     !== undefined) patch.valor       = changes.valor;
-    if (changes.categoria !== undefined) patch.categoria   = changes.categoria;
-    if (Object.keys(patch).length > 0) {
-      const { error } = await supabase
-        .from('ledger_movements')
-        .update(patch)
-        .eq('estado', 'esperado')
-        .like('notas', `recurring:${id}%`);
-      if (error) console.error('useRecurring updateAndSync error:', error.message);
+    const current = items.find(i => i.id === id);
+    if (!current) return;
+    const updated = { ...current, ...changes };
+    persist(items.map(i => i.id === id ? updated : i));
+
+    const rebuilds = changes.fechaInicio !== undefined || changes.duracionMeses !== undefined;
+
+    if (rebuilds && updated.fechaInicio) {
+      // Borrar todos los esperados y recrear con los nuevos parámetros
+      await deleteMovements(id);
+      await createMovements(id, updated);
+    } else {
+      // Solo parchear campos simples en los movimientos existentes
+      const patch: Record<string, unknown> = {};
+      if (changes.nombre    !== undefined) patch.descripcion = changes.nombre;
+      if (changes.valor     !== undefined) patch.valor       = changes.valor;
+      if (changes.categoria !== undefined) patch.categoria   = changes.categoria;
+      if (Object.keys(patch).length > 0) {
+        const { error } = await supabase
+          .from('ledger_movements')
+          .update(patch)
+          .eq('estado', 'esperado')
+          .like('notas', `recurring:${id}%`);
+        if (error) console.error('useRecurring updateAndSync patch:', error.message);
+      }
     }
   };
 
