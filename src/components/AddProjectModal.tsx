@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Client } from '../types';
+import { Client, MESES_ES } from '../types';
 import { useTRM } from '../hooks/useTRM';
 import { Plus, Trash2 } from 'lucide-react';
 import { createCalendarEvents, isGCalConnected } from '../hooks/useGoogleCalendar';
@@ -59,13 +59,51 @@ export const AddProjectModal: React.FC<Props> = ({ clients, isOpen, onClose, onS
     { amount: 0, date: '', status: 'paid' },
     { amount: 0, date: '', status: 'pending' },
   ]);
+  const [qDates, setQDates] = useState<{d1: string; d2: string}[]>([]);
   const [loading, setLoading] = useState(false);
+
+  // Reset form when modal opens to avoid stale state from previous session
+  useEffect(() => {
+    if (isOpen) {
+      setCurrency('COP');
+      setScheduleType('equal');
+      setIsMRR(false);
+      setIsQuincenal(false);
+      setIsNewClient(false);
+      setClientId('');
+      setNewClientName(''); setNewClientCompany(''); setNewClientEmail(''); setNewClientPhone('');
+      setName(''); setPlan(''); setTotal('');
+      setInstallments('1'); setDurationMonths('1');
+      setFirstPaymentDate('');
+      setCustomRows([{ amount: 0, date: '', status: 'paid' }, { amount: 0, date: '', status: 'pending' }]);
+      setQDates([]);
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (scheduleType === 'equal') setDurationMonths(installments);
   }, [installments, scheduleType]);
 
+  // Inicializar/reinicializar fechas quincenales editables
+  useEffect(() => {
+    if (!isQuincenal || !firstPaymentDate || Number(installments) < 1) { setQDates([]); return; }
+    const n = Number(installments) || 1;
+    const base = new Date(firstPaymentDate + 'T12:00:00');
+    setQDates(Array.from({ length: n }, (_, i) => {
+      const d1 = new Date(base.getFullYear(), base.getMonth() + i, base.getDate());
+      const d2 = new Date(d1); d2.setDate(d2.getDate() + 15);
+      return { d1: d1.toISOString().split('T')[0], d2: d2.toISOString().split('T')[0] };
+    }));
+  }, [isQuincenal, firstPaymentDate, installments]);
+
   if (!isOpen) return null;
+
+  const endDate = (() => {
+    if (!firstPaymentDate || !durationMonths) return null;
+    const d = new Date(firstPaymentDate + 'T12:00:00');
+    d.setMonth(d.getMonth() + Number(durationMonths));
+    return d.toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' });
+  })();
 
   const originalAmount    = Number(total) || 0;
   const baseTotal         = isMRR ? originalAmount * Number(installments || 12) : originalAmount;
@@ -103,115 +141,159 @@ export const AddProjectModal: React.FC<Props> = ({ clients, isOpen, onClose, onS
     if (!isNewClient && !clientId) {
       return alert('Selecciona un cliente o crea uno nuevo.');
     }
+    if (isNewClient && !newClientName.trim()) {
+      return alert('Ingresa el nombre del cliente.');
+    }
     if (scheduleType === 'equal' && !firstPaymentDate) {
       return alert('Ingresa la fecha del primer cobro.');
     }
-    if (scheduleType === 'custom' && Math.abs(totalScheduled - originalAmount) > 0.01) {
-      return alert(`La suma (${totalScheduled.toLocaleString()}) no coincide con el total (${originalAmount.toLocaleString()}).`);
+    if (scheduleType === 'custom' && customRows.some(r => !r.date)) {
+      return alert('Completa las fechas de todas las cuotas.');
     }
 
     setLoading(true);
+    try {
+      // ── 1. Cliente ──────────────────────────────────────────
+      let finalClientId = clientId;
+      if (isNewClient) {
+        const { data: newClient, error: ce } = await supabase
+          .from('clients')
+          .insert([{
+            name: newClientName.trim(),
+            company: newClientCompany.trim() || newClientName.trim(),
+            email: newClientEmail.trim() || null,
+            phone: newClientPhone.trim() || null,
+          }])
+          .select().single();
+        if (ce) { alert('Error al crear cliente: ' + ce.message); return; }
+        finalClientId = newClient.id;
+      }
 
-    // ── 1. Cliente ────────────────────────────────────────────
-    let finalClientId = clientId;
-    if (isNewClient) {
-      const { data: newClient, error: ce } = await supabase
-        .from('clients')
-        .insert([{
-          name: newClientName,
-          company: newClientCompany || newClientName,
-          email: newClientEmail || null,
-          phone: newClientPhone || null,
-        }])
-        .select().single();
-      if (ce) { setLoading(false); return alert('Error al crear cliente: ' + ce.message); }
-      finalClientId = newClient.id;
-    }
+      if (!finalClientId) { alert('Debes seleccionar o crear un cliente.'); return; }
 
-    // ── 2. Proyecto ───────────────────────────────────────────
-    const actualInstallments = scheduleType === 'custom'
-      ? customRows.length
-      : isQuincenal ? numMonths * 2 : numMonths;
+      // ── 2. Proyecto ─────────────────────────────────────────
+      const actualInstallments = scheduleType === 'custom'
+        ? customRows.length
+        : isQuincenal ? numMonths * 2 : numMonths;
 
-    const startDate = scheduleType === 'custom'
-      ? customRows[0]?.date
-      : firstPaymentDate;
+      const startDate = scheduleType === 'custom'
+        ? customRows[0]?.date
+        : firstPaymentDate;
 
-    const { data: project, error: pe } = await supabase.from('projects').insert([{
-      client_id:       finalClientId,
-      name,
-      plan,
-      total_amount:    finalAmountCOP,
-      installments:    actualInstallments,
-      duration_months: Number(durationMonths) || numMonths,
-      start_date:      startDate || new Date().toISOString().split('T')[0],
-      status:          'active',
-      is_recurring:    isMRR,
-    }]).select().single();
+      const { data: project, error: pe } = await supabase.from('projects').insert([{
+        client_id:       finalClientId,
+        name:            name.trim(),
+        plan:            plan.trim(),
+        total_amount:    finalAmountCOP,
+        installments:    actualInstallments,
+        duration_months: Number(durationMonths) || numMonths,
+        start_date:      startDate || new Date().toISOString().split('T')[0],
+        status:          'active',
+        is_recurring:    isMRR,
+      }]).select().single();
 
-    if (pe) { setLoading(false); return alert('Error al crear proyecto: ' + pe.message); }
+      if (pe) { alert('Error al crear proyecto: ' + pe.message); return; }
 
-    // ── 3. Pagos ──────────────────────────────────────────────
-    const clientName  = isNewClient ? newClientName  : (clients.find(c => c.id === clientId)?.name  || '');
-    const clientEmail = isNewClient ? newClientEmail : (clients.find(c => c.id === clientId)?.email || '');
-    const clientPhone = isNewClient ? newClientPhone : (clients.find(c => c.id === clientId)?.phone || '');
+      // ── 3. Pagos ────────────────────────────────────────────
+      const clientName  = isNewClient ? newClientName  : (clients.find(c => c.id === clientId)?.name  || '');
+      const clientEmail = isNewClient ? newClientEmail : (clients.find(c => c.id === clientId)?.email || '');
+      const clientPhone = isNewClient ? newClientPhone : (clients.find(c => c.id === clientId)?.phone || '');
 
-    const paymentsToInsert: { project_id: string; amount: number; date: string; status: string }[] = [];
-    const calendarPayloads: { projectName: string; clientName: string; clientEmail: string; clientPhone: string; amount: number; date: string }[] = [];
-    const webhookPayloads:  { projectName: string; clientName: string; clientEmail: string; clientPhone: string; amount: number; dueDate: string }[] = [];
+      const paymentsToInsert: { project_id: string; amount: number; date: string; status: string }[] = [];
+      const calendarPayloads: { projectName: string; clientName: string; clientEmail: string; clientPhone: string; amount: number; date: string }[] = [];
+      const webhookPayloads:  { projectName: string; clientName: string; clientEmail: string; clientPhone: string; amount: number; dueDate: string }[] = [];
 
-    if (scheduleType === 'custom') {
-      customRows.forEach(r => {
-        const amt = currency === 'USD' ? r.amount * customTrm : r.amount;
-        paymentsToInsert.push({ project_id: project.id, amount: amt, date: r.date, status: r.status });
-        if (r.status === 'pending') calendarPayloads.push({ projectName: name, clientName, clientEmail, clientPhone, amount: amt, date: r.date });
-        webhookPayloads.push({ projectName: name, clientName, clientEmail, clientPhone, amount: amt, dueDate: r.date });
-      });
+      if (scheduleType === 'custom') {
+        customRows.forEach(r => {
+          const amt = currency === 'USD' ? r.amount * customTrm : r.amount;
+          paymentsToInsert.push({ project_id: project.id, amount: amt, date: r.date, status: r.status });
+          if (r.status === 'pending') calendarPayloads.push({ projectName: name, clientName, clientEmail, clientPhone, amount: amt, date: r.date });
+          webhookPayloads.push({ projectName: name, clientName, clientEmail, clientPhone, amount: amt, dueDate: r.date });
+        });
+      } else {
+        const base = new Date(firstPaymentDate + 'T12:00:00');
+        for (let i = 0; i < numMonths; i++) {
+          const d1 = new Date(base.getFullYear(), base.getMonth() + i, base.getDate());
+          const d1Str = d1.toISOString().split('T')[0];
 
-    } else {
-      const base = new Date(firstPaymentDate + 'T12:00:00');
-      for (let i = 0; i < numMonths; i++) {
-        const d1 = new Date(base.getFullYear(), base.getMonth() + i, base.getDate());
-        const d1Str = d1.toISOString().split('T')[0];
-
-        if (isQuincenal) {
-          const d2 = new Date(d1); d2.setDate(d2.getDate() + 15);
-          const d2Str = d2.toISOString().split('T')[0];
-          paymentsToInsert.push(
-            { project_id: project.id, amount: halfAmount, date: d1Str, status: 'pending' },
-            { project_id: project.id, amount: installmentAmount - halfAmount, date: d2Str, status: 'pending' },
-          );
-          calendarPayloads.push(
-            { projectName: name, clientName, clientEmail, clientPhone, amount: halfAmount, date: d1Str },
-            { projectName: name, clientName, clientEmail, clientPhone, amount: installmentAmount - halfAmount, date: d2Str },
-          );
-          webhookPayloads.push(
-            { projectName: name, clientName, clientEmail, clientPhone, amount: halfAmount, dueDate: d1Str },
-            { projectName: name, clientName, clientEmail, clientPhone, amount: installmentAmount - halfAmount, dueDate: d2Str },
-          );
-        } else {
-          paymentsToInsert.push({ project_id: project.id, amount: installmentAmount, date: d1Str, status: 'pending' });
-          calendarPayloads.push({ projectName: name, clientName, clientEmail, clientPhone, amount: installmentAmount, date: d1Str });
-          webhookPayloads.push({ projectName: name, clientName, clientEmail, clientPhone, amount: installmentAmount, dueDate: d1Str });
+          if (isQuincenal) {
+            const fallbackD2 = (() => { const d = new Date(d1); d.setDate(d.getDate() + 15); return d.toISOString().split('T')[0]; })();
+            const qD1 = qDates[i]?.d1 || d1Str;
+            const qD2 = qDates[i]?.d2 || fallbackD2;
+            paymentsToInsert.push(
+              { project_id: project.id, amount: halfAmount, date: qD1, status: 'pending' },
+              { project_id: project.id, amount: installmentAmount - halfAmount, date: qD2, status: 'pending' },
+            );
+            calendarPayloads.push(
+              { projectName: name, clientName, clientEmail, clientPhone, amount: halfAmount, date: qD1 },
+              { projectName: name, clientName, clientEmail, clientPhone, amount: installmentAmount - halfAmount, date: qD2 },
+            );
+            webhookPayloads.push(
+              { projectName: name, clientName, clientEmail, clientPhone, amount: halfAmount, dueDate: qD1 },
+              { projectName: name, clientName, clientEmail, clientPhone, amount: installmentAmount - halfAmount, dueDate: qD2 },
+            );
+          } else {
+            paymentsToInsert.push({ project_id: project.id, amount: installmentAmount, date: d1Str, status: 'pending' });
+            calendarPayloads.push({ projectName: name, clientName, clientEmail, clientPhone, amount: installmentAmount, date: d1Str });
+            webhookPayloads.push({ projectName: name, clientName, clientEmail, clientPhone, amount: installmentAmount, dueDate: d1Str });
+          }
         }
       }
+
+      if (paymentsToInsert.length > 0) {
+        const { data: boldAcc } = await supabase.from('real_accounts').select('id').ilike('nombre', '%bold%').limit(1);
+        const boldId = boldAcc?.[0]?.id || null;
+
+        const { data: newPayments, error: payErr } = await supabase.from('payments').insert(paymentsToInsert).select();
+        if (payErr) console.error('Error insertando pagos:', payErr.message);
+
+        // Auto-crear movimientos proyectados (esperado) para cada pago
+        if (newPayments) {
+          for (let i = 0; i < newPayments.length; i++) {
+            const pay = newPayments[i];
+            const mesIdx = new Date(pay.date + 'T12:00:00').getMonth();
+            const { data: mov } = await supabase.from('ledger_movements').insert({
+              fecha:           pay.date,
+              tipo_movimiento: 'ingreso_operativo',
+              naturaleza:      'ingreso',
+              descripcion:     `Cobro: ${name.trim()} — ${clientName}`,
+              valor:           Number(pay.amount),
+              categoria:       'Ads Management',
+              estado:          'esperado',
+              cuenta_real_id:  boldId,
+              project_id:      project.id,
+              client_id:       finalClientId,
+              mes:             MESES_ES[mesIdx],
+              personal_flag:   false,
+              payment_id:      pay.id,
+            }).select().single();
+            if (mov) {
+              await supabase.from('payments').update({ ledger_movement_id: mov.id }).eq('id', pay.id);
+            }
+          }
+        }
+      }
+
+      // ── 4. Google Calendar ──────────────────────────────────
+      if (isGCalConnected() && calendarPayloads.length > 0) {
+        try {
+          const created = await createCalendarEvents(calendarPayloads);
+          if (created > 0) alert(`✅ ${created} evento(s) creados en Google Calendar.`);
+        } catch (calErr) {
+          console.error('Error Google Calendar:', calErr);
+        }
+      }
+
+      // ── 5. GoHighLevel webhook ──────────────────────────────
+      if (webhookPayloads.length > 0) await sendGHLWebhook(webhookPayloads);
+
+      onSuccess();
+      onClose();
+    } catch (err: any) {
+      alert('Error inesperado: ' + (err?.message || String(err)));
+    } finally {
+      setLoading(false);
     }
-
-    const { error: payErr } = await supabase.from('payments').insert(paymentsToInsert);
-    if (payErr) console.error('Error insertando pagos:', payErr.message);
-
-    // ── 4. Google Calendar ────────────────────────────────────
-    if (isGCalConnected() && calendarPayloads.length > 0) {
-      const created = await createCalendarEvents(calendarPayloads);
-      if (created > 0) alert(`✅ ${created} evento(s) creados en Google Calendar.`);
-    }
-
-    // ── 5. GoHighLevel webhook ────────────────────────────────
-    if (webhookPayloads.length > 0) await sendGHLWebhook(webhookPayloads);
-
-    setLoading(false);
-    onSuccess();
-    onClose();
   };
 
   // ── Render ────────────────────────────────────────────────
@@ -298,6 +380,7 @@ export const AddProjectModal: React.FC<Props> = ({ clients, isOpen, onClose, onS
                 <span style={{ fontSize: '0.68rem', color: '#52525b' }}>Meses vigencia:</span>
                 <input type="number" min="1" value={durationMonths} onChange={e => setDurationMonths(e.target.value)}
                   style={{ ...inp, width: '60px', padding: '0.3rem' }} />
+                {endDate && <span style={{ fontSize: '0.68rem', color: '#10b981' }}>→ {endDate}</span>}
               </div>
             </div>
 
@@ -343,11 +426,40 @@ export const AddProjectModal: React.FC<Props> = ({ clients, isOpen, onClose, onS
                   </div>
                 </label>
 
-                {/* ── Preview de cuotas ────────────────────── */}
-                {previewPayments.length > 0 && (
+                {/* ── Preview quincenas editables ──────────── */}
+                {isQuincenal && qDates.length > 0 && (
                   <div style={{ background: '#0a0a0a', borderRadius: '8px', padding: '0.75rem' }}>
                     <div style={{ fontSize: '0.65rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700, marginBottom: '0.5rem' }}>
-                      Vista previa {isQuincenal ? `(${numMonths * 2} cobros quinc.)` : `(${numMonths} cobros mensuales)`}
+                      Fechas quincenales — edita las fechas si aplica ({numMonths * 2} cobros)
+                    </div>
+                    {qDates.map((pair, i) => (
+                      <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.4rem', paddingBottom: '0.4rem', borderBottom: '1px solid #111' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                          <input type="date" value={pair.d1}
+                            onChange={e => setQDates(prev => prev.map((p, idx) => idx === i ? { ...p, d1: e.target.value } : p))}
+                            style={{ ...inp, padding: '0.3rem', flex: 1 }} />
+                          <span style={{ fontSize: '0.72rem', color: '#10b981', whiteSpace: 'nowrap' }}>{fmt(halfAmount)}</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                          <input type="date" value={pair.d2}
+                            onChange={e => setQDates(prev => prev.map((p, idx) => idx === i ? { ...p, d2: e.target.value } : p))}
+                            style={{ ...inp, padding: '0.3rem', flex: 1 }} />
+                          <span style={{ fontSize: '0.72rem', color: '#10b981', whiteSpace: 'nowrap' }}>{fmt(installmentAmount - halfAmount)}</span>
+                        </div>
+                      </div>
+                    ))}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.25rem', paddingTop: '0.4rem', borderTop: '1px solid #1f1f1f' }}>
+                      <span style={{ fontSize: '0.75rem', color: '#fff', fontWeight: 700 }}>Total</span>
+                      <span style={{ fontSize: '0.75rem', color: '#10b981', fontWeight: 700 }}>{fmt(finalAmountCOP)}</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Preview cuotas iguales (no quincenal) ── */}
+                {!isQuincenal && previewPayments.length > 0 && (
+                  <div style={{ background: '#0a0a0a', borderRadius: '8px', padding: '0.75rem' }}>
+                    <div style={{ fontSize: '0.65rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700, marginBottom: '0.5rem' }}>
+                      Vista previa ({numMonths} cobros mensuales)
                     </div>
                     {previewPayments.map((p, i) => (
                       <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.2rem 0', borderBottom: '1px solid #111' }}>
@@ -357,7 +469,7 @@ export const AddProjectModal: React.FC<Props> = ({ clients, isOpen, onClose, onS
                     ))}
                     {numMonths > 6 && (
                       <div style={{ fontSize: '0.65rem', color: '#3f3f46', marginTop: '0.35rem', textAlign: 'center' }}>
-                        + {(isQuincenal ? numMonths * 2 : numMonths) - previewPayments.length} cobro(s) más…
+                        + {numMonths - previewPayments.length} cobro(s) más…
                       </div>
                     )}
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.5rem', paddingTop: '0.4rem', borderTop: '1px solid #1f1f1f' }}>

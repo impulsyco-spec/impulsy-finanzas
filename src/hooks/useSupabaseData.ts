@@ -38,7 +38,8 @@ export function useSupabaseData() {
         amount: Number(p.amount),
         actualAmount: p.actual_amount ? Number(p.actual_amount) : undefined,
         date: p.date,
-        status: p.status
+        status: p.status,
+        ledgerMovementId: p.ledger_movement_id || undefined,
       })));
     }
     setLoading(false);

@@ -8,6 +8,7 @@ import { Inicio }       from './pages/v2/Inicio';
 import { ProyectosV2 }  from './pages/v2/ProyectosV2';
 import { Finanzas }     from './pages/v2/Finanzas';
 import { Resumen }      from './pages/v2/Resumen';
+import { Equipo }       from './pages/v2/Equipo';
 
 // ── Páginas compartidas (no cambian) ─────────────────────
 import { Login }         from './pages/Login';
@@ -27,6 +28,7 @@ import { Rentabilidad }  from './pages/Rentabilidad';
 import { ResumenAnual }  from './pages/ResumenAnual';
 import { Alertas }       from './pages/Alertas';
 
+import { FinancialAdvisor } from './components/FinancialAdvisor';
 import { Home, FolderKanban, TrendingUp, BarChart2, LogOut } from 'lucide-react';
 import './index.css';
 
@@ -56,6 +58,7 @@ function App() {
             <Route path="/"          element={<Inicio />} />
             <Route path="/proyectos" element={<ProyectosV2 />} />
             <Route path="/finanzas"  element={<Finanzas />} />
+            <Route path="/equipo"    element={<Equipo />} />
             <Route path="/resumen"   element={<Resumen />} />
 
             {/* ── Compartidas ── */}
@@ -76,6 +79,8 @@ function App() {
             <Route path="/alertas"      element={<Alertas />} />
           </Routes>
         </main>
+
+        <FinancialAdvisor />
 
         {/* Mobile nav v2 */}
         <nav className="mobile-nav">

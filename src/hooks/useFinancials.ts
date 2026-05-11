@@ -26,17 +26,35 @@ function avgMonthlyExpenses(confirmed: LedgerMovement[]): number {
 export function calcKPIs(
   movements: LedgerMovement[],
   realAccounts: RealAccount[],
-  debts: Debt[]
+  debts: Debt[],
+  horizonte: number = 3,  // meses hacia adelante
+  dias?: number           // si se pasa, usa días exactos en lugar de meses
 ): FinancialKPIs {
   const confirmed = movements.filter(m => m.estado === 'confirmado');
-  const pending   = movements.filter(m => m.estado === 'esperado' || m.estado === 'facturado');
+  // 'vencido' = obligación no saldada, sigue siendo comprometida/por cobrar
+  const pending   = movements.filter(m => m.estado === 'esperado' || m.estado === 'facturado' || m.estado === 'vencido');
 
   const saldoInicial   = realAccounts.reduce((s, a) => s + a.saldoInicial, 0);
   const ingresosReales = confirmed.filter(m => m.naturaleza === 'ingreso').reduce((s, m) => s + m.valor, 0);
   const egresosReales  = confirmed.filter(m => m.naturaleza === 'egreso').reduce((s, m) => s + m.valor, 0);
   const cajaTotal      = saldoInicial + ingresosReales - egresosReales;
 
-  const cajaComprometida = pending.filter(m => m.naturaleza === 'egreso').reduce((s, m) => s + m.valor, 0);
+  // Comprometida: si viene días exactos los usa, sino usa frontera mensual
+  const hoy = new Date();
+  let pendingHorizon: LedgerMovement[];
+  if (dias !== undefined) {
+    const horizonDate = new Date(hoy);
+    horizonDate.setDate(horizonDate.getDate() + dias);
+    const horizonStr = horizonDate.toISOString().slice(0, 10);
+    const hoyStr = hoy.toISOString().slice(0, 10);
+    pendingHorizon = pending.filter(m => m.fecha >= hoyStr && m.fecha <= horizonStr);
+  } else {
+    const horizonDate = new Date(hoy.getFullYear(), hoy.getMonth() + horizonte, 1);
+    const horizonMs   = `${horizonDate.getFullYear()}-${String(horizonDate.getMonth() + 1).padStart(2, '0')}`;
+    pendingHorizon = pending.filter(m => m.fecha.slice(0, 7) <= horizonMs);
+  }
+
+  const cajaComprometida = pendingHorizon.filter(m => m.naturaleza === 'egreso').reduce((s, m) => s + m.valor, 0);
   const cajaLibre        = cajaTotal - cajaComprometida;
   const porCobrar        = pending.filter(m => m.naturaleza === 'ingreso').reduce((s, m) => s + m.valor, 0);
   const totalDeudas      = debts.filter(d => d.activa).reduce((s, d) => s + d.saldoActual, 0);
@@ -51,8 +69,10 @@ export function calcKPIs(
     .filter(m => m.tipoMovimiento === 'retiro_fundador' && m.fecha >= monthStart())
     .reduce((s, m) => s + m.valor, 0);
 
+  // Runway = caja real / gasto mensual promedio histórico (confirmado)
+  // No usa cajaLibre para evitar que compromisos futuros pre-planificados distorsionen el resultado
   const avgGasto = avgMonthlyExpenses(confirmed);
-  const runway   = avgGasto > 0 ? cajaLibre / avgGasto : 99;
+  const runway   = avgGasto > 0 ? cajaTotal / avgGasto : 99;
 
   return {
     cajaTotal, cajaComprometida, cajaLibre,

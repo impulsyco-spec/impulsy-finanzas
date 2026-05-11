@@ -85,12 +85,26 @@ export interface LedgerMovement {
   projectId?: string;
   clientId?: string;
   paymentId?: string;
+  teamMemberId?: string;
   tercero?: string;
   fechaVencimiento?: string;
   notas?: string;
   personalFlag: boolean;
   tipoRetiro?: 'sueldo_aprobado' | 'anticipo_sueldo' | 'retiro_extraordinario' | 'gasto_personal_empresa';
   mes?: string;
+  createdAt: string;
+}
+
+export interface TeamMember {
+  id: string;
+  nombre: string;
+  rol: string;
+  email?: string;
+  telefono?: string;
+  tarifaMensual: number;
+  activo: boolean;
+  notas?: string;
+  avatarColor: string;
   createdAt: string;
 }
 
@@ -180,6 +194,11 @@ export const CATS_INGRESO = [
 
 export const CATS_EGRESO = [
   'Ads Paid Media','Producción de Contenido','Fullfillment Trafficker',
-  'Fullfillment Edición','Fullfillment Programadores','Software y Suscripciones',
-  'Salario','Infraestructura','Educación','Viáticos','Impuestos','Deudas','Personal','Otro',
+  'Fullfillment Edición','Fullfillment Programadores','Fullfillment tecnológico',
+  'Software y Suscripciones','Salario','Infraestructura','Educación','Viáticos','Impuestos','Deudas','Personal','Otro',
+];
+
+export const ROLES_EQUIPO = [
+  'Trafficker','Programador','Diseñador','Community Manager','Editor',
+  'Copywriter','Estratega','Consultor','Coordinador','Otro',
 ];

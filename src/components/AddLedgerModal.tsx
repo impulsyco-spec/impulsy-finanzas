@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 import {
   TipoMovimiento, TIPO_MOV_LABELS, NATURALEZA_POR_TIPO,
   CATS_INGRESO, CATS_EGRESO, MESES_ES,
-  RealAccount, Pocket, LedgerMovement,
+  RealAccount, Pocket, LedgerMovement, TeamMember,
 } from '../types';
 import type { Project, Client } from '../types';
 
@@ -16,7 +16,9 @@ interface Props {
   pockets: Pocket[];
   projects: Project[];
   clients: Client[];
+  teamMembers?: TeamMember[];
   editing?: LedgerMovement | null;
+  defaultNaturaleza?: 'ingreso' | 'egreso' | 'neutro';
 }
 
 const TIPOS: TipoMovimiento[] = [
@@ -49,6 +51,7 @@ const empty = {
   pocket_destino_id: '',
   project_id: '',
   client_id: '',
+  team_member_id: '',
   tercero: '',
   fecha_vencimiento: '',
   notas: '',
@@ -57,7 +60,7 @@ const empty = {
 };
 
 export const AddLedgerModal: React.FC<Props> = ({
-  isOpen, onClose, onSuccess, realAccounts, pockets, projects, clients, editing,
+  isOpen, onClose, onSuccess, realAccounts, pockets, projects, teamMembers = [], editing, defaultNaturaleza,
 }) => {
   const [form, setForm] = useState({ ...empty });
   const [saving, setSaving] = useState(false);
@@ -70,13 +73,14 @@ export const AddLedgerModal: React.FC<Props> = ({
         descripcion: editing.descripcion,
         valor: String(editing.valor),
         categoria: editing.categoria || '',
-        estado: editing.estado === 'confirmado' ? 'confirmado' : 'esperado',
+        estado: editing.estado,
         cuenta_real_id: editing.cuentaRealId || '',
         cuenta_destino_id: '',
         pocket_id: editing.pocketId || '',
         pocket_destino_id: '',
         project_id: editing.projectId || '',
         client_id: editing.clientId || '',
+        team_member_id: editing.teamMemberId || '',
         tercero: editing.tercero || '',
         fecha_vencimiento: editing.fechaVencimiento || '',
         notas: editing.notas || '',
@@ -84,9 +88,14 @@ export const AddLedgerModal: React.FC<Props> = ({
         tipo_retiro: editing.tipoRetiro || '',
       });
     } else {
-      setForm({ ...empty, fecha: new Date().toISOString().split('T')[0] });
+      const boldAcc = realAccounts.find(a => a.nombre.toLowerCase().includes('bold'));
+      const defaultTipo: TipoMovimiento =
+        defaultNaturaleza === 'ingreso' ? 'ingreso_operativo' :
+        defaultNaturaleza === 'egreso'  ? 'egreso_operativo' :
+        defaultNaturaleza === 'neutro'  ? 'transferencia' : 'ingreso_operativo';
+      setForm({ ...empty, fecha: new Date().toISOString().split('T')[0], cuenta_real_id: boldAcc?.id || '', tipo: defaultTipo });
     }
-  }, [editing, isOpen]);
+  }, [editing, isOpen, realAccounts, defaultNaturaleza]);
 
   if (!isOpen) return null;
 
@@ -96,11 +105,25 @@ export const AddLedgerModal: React.FC<Props> = ({
   const mesIndex = new Date(form.fecha + 'T12:00:00').getMonth();
   const mes = MESES_ES[mesIndex] || '';
 
+  // Filter tipo options when a naturaleza is pre-selected (new movement only)
+  const tiposToShow = (!editing && defaultNaturaleza)
+    ? TIPOS.filter(t => NATURALEZA_POR_TIPO[t] === defaultNaturaleza)
+    : TIPOS;
+
   const set = (k: keyof typeof form, v: any) => setForm(f => ({ ...f, [k]: v }));
 
-  const terceroLabel = naturaleza === 'ingreso' ? 'Cliente / Fuente'
-    : naturaleza === 'egreso' ? 'Proveedor'
-    : 'Tercero';
+  const terceroLabel = naturaleza === 'egreso' ? 'Proveedor' : 'Tercero';
+
+  const estadoOpts = naturaleza === 'egreso'
+    ? [
+        { v: 'confirmado', l: 'Pagado — Ya salió de mi cuenta' },
+        { v: 'esperado',   l: 'Por pagar — Acordado, aún no pagado' },
+      ]
+    : [
+        { v: 'confirmado', l: 'Recibido — Ya está en mi cuenta' },
+        { v: 'facturado',  l: 'Facturado — Factura enviada, pendiente de cobro' },
+        { v: 'esperado',   l: 'Esperado — Acordado, aún no recibido' },
+      ];
 
   const handleSave = async () => {
     if (!form.fecha || !form.descripcion.trim() || !form.valor || Number(String(form.valor).replace(/\./g,'')) <= 0) {
@@ -122,8 +145,9 @@ export const AddLedgerModal: React.FC<Props> = ({
         estado: form.estado,
         project_id: form.project_id || null,
         client_id: form.client_id || null,
+        team_member_id: form.team_member_id || null,
         tercero: form.tercero.trim() || null,
-        fecha_vencimiento: form.estado === 'esperado' ? (form.fecha_vencimiento || null) : null,
+        fecha_vencimiento: (form.estado === 'esperado' || form.estado === 'facturado') ? (form.fecha_vencimiento || null) : null,
         notas: form.notas.trim() || null,
         personal_flag: form.personal_flag,
         tipo_retiro: form.tipo === 'retiro_fundador' ? (form.tipo_retiro || null) : null,
@@ -160,6 +184,16 @@ export const AddLedgerModal: React.FC<Props> = ({
           pocket_id: form.pocket_id || null,
         }).eq('id', editing.id);
         if (error) throw error;
+        // Sincronizar payment vinculado si existe
+        if (editing.paymentId) {
+          const valorNum = Number(String(form.valor).replace(/\./g, ''));
+          const isConfirmed = form.estado === 'confirmado';
+          await supabase.from('payments').update({
+            amount: valorNum,
+            actual_amount: isConfirmed ? valorNum : null,
+            status: isConfirmed ? 'paid' : 'pending',
+          }).eq('id', editing.paymentId);
+        }
       } else {
         const { error } = await supabase.from('ledger_movements').insert({
           ...base,
@@ -200,8 +234,10 @@ export const AddLedgerModal: React.FC<Props> = ({
 
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-          <h2 style={{ color: '#fff', fontWeight: 800, fontSize: '1.1rem' }}>
-            {editing ? 'Editar Movimiento' : 'Nuevo Movimiento'}
+          <h2 style={{ color: natColor, fontWeight: 800, fontSize: '1.1rem' }}>
+            {editing ? 'Editar Movimiento' :
+              naturaleza === 'ingreso' ? '↑ Nuevo Ingreso' :
+              naturaleza === 'egreso' ? '↓ Nuevo Egreso' : '⇄ Nuevo Movimiento'}
           </h2>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer' }}><X size={20} /></button>
         </div>
@@ -212,12 +248,11 @@ export const AddLedgerModal: React.FC<Props> = ({
           <div style={{ gridColumn: '1 / -1' }}>
             <label style={lbl}>Tipo de Movimiento *</label>
             <select style={inp} value={form.tipo} onChange={e => set('tipo', e.target.value as TipoMovimiento)}>
-              {TIPOS.map(t => <option key={t} value={t}>{TIPO_MOV_LABELS[t]}</option>)}
+              {tiposToShow.map(t => <option key={t} value={t}>{TIPO_MOV_LABELS[t]}</option>)}
             </select>
             {TIPO_HINTS[form.tipo] && (
               <div style={{ marginTop: '0.3rem', fontSize: '0.75rem', color: natColor }}>
-                <strong>{naturaleza === 'ingreso' ? '↑ Ingreso' : naturaleza === 'egreso' ? '↓ Egreso' : '⇄ Neutro'}</strong>
-                {' — '}{TIPO_HINTS[form.tipo]}
+                {TIPO_HINTS[form.tipo]}
               </div>
             )}
           </div>
@@ -300,8 +335,7 @@ export const AddLedgerModal: React.FC<Props> = ({
               <div>
                 <label style={lbl}>Estado</label>
                 <select style={inp} value={form.estado} onChange={e => set('estado', e.target.value)}>
-                  <option value="confirmado">Recibido — Ya está en mi cuenta</option>
-                  <option value="esperado">Esperado — Acordado, aún no recibido</option>
+                  {estadoOpts.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
                 </select>
               </div>
 
@@ -336,18 +370,42 @@ export const AddLedgerModal: React.FC<Props> = ({
               <option value="">Sin proyecto</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
+            <div style={{ fontSize: '0.65rem', color: '#3f3f46', marginTop: '0.2rem' }}>
+              Vincula este movimiento a un proyecto específico para trackear su P&L.
+            </div>
           </div>
 
-          {/* Tercero contextual */}
-          <div>
-            <label style={lbl}>{terceroLabel}</label>
-            <input type="text" style={inp} value={form.tercero}
-              onChange={e => set('tercero', e.target.value)}
-              placeholder={naturaleza === 'ingreso' ? 'Nombre del cliente' : naturaleza === 'egreso' ? 'Nombre del proveedor' : 'Tercero'} />
-          </div>
+          {/* Responsable del equipo — solo para egresos */}
+          {naturaleza === 'egreso' && teamMembers.length > 0 && (
+            <div>
+              <label style={lbl}>Responsable / Proveedor</label>
+              <select style={inp} value={form.team_member_id} onChange={e => set('team_member_id', e.target.value)}>
+                <option value="">Sin asignar</option>
+                {teamMembers.filter(m => m.activo).map(m => (
+                  <option key={m.id} value={m.id}>{m.nombre} · {m.rol}</option>
+                ))}
+              </select>
+              <div style={{ fontSize: '0.65rem', color: '#3f3f46', marginTop: '0.2rem' }}>
+                Asigna a un miembro del equipo para trackear sus pagos.
+              </div>
+            </div>
+          )}
 
-          {/* Fecha vencimiento — solo si es Esperado */}
-          {form.estado === 'esperado' && !isTransfer && (
+          {/* Tercero — solo para egresos y neutros */}
+          {naturaleza !== 'ingreso' && (
+            <div>
+              <label style={lbl}>{terceroLabel}</label>
+              <input type="text" style={inp} value={form.tercero}
+                onChange={e => set('tercero', e.target.value)}
+                placeholder={naturaleza === 'egreso' ? 'Nombre del proveedor externo' : 'Tercero'} />
+              <div style={{ fontSize: '0.65rem', color: '#3f3f46', marginTop: '0.2rem' }}>
+                Texto libre — nombre de empresa o persona externa.
+              </div>
+            </div>
+          )}
+
+          {/* Fecha vencimiento — aplica a Esperado y Facturado */}
+          {(form.estado === 'esperado' || form.estado === 'facturado') && !isTransfer && (
             <div>
               <label style={lbl}>Fecha esperada de pago</label>
               <input type="date" style={inp} value={form.fecha_vencimiento}
@@ -377,8 +435,8 @@ export const AddLedgerModal: React.FC<Props> = ({
               placeholder="Observaciones, número de factura, etc." />
           </div>
 
-          {/* Personal flag */}
-          {!isTransfer && (
+          {/* Personal flag — solo para egresos */}
+          {!isTransfer && naturaleza === 'egreso' && (
             <div style={{ gridColumn: '1 / -1' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '0.6rem 0.75rem', background: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: '8px' }}>
                 <input type="checkbox" checked={form.personal_flag} onChange={e => set('personal_flag', e.target.checked)}

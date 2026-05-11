@@ -39,6 +39,7 @@ export function useLedger() {
           notas: m.notas,
           personalFlag: Boolean(m.personal_flag),
           tipoRetiro: m.tipo_retiro,
+          teamMemberId: m.team_member_id,
           mes: m.mes,
           createdAt: m.created_at,
         })));

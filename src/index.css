@@ -461,4 +461,11 @@ tr:hover td {
 
   /* Financial extension — semaphore strip collapses to 2 cols */
   .sem-grid { grid-template-columns: repeat(2, 1fr) !important; }
+
+  /* Responsive grids — inline-style overrides via class */
+  .resp-grid-hero  { grid-template-columns: 1fr !important; }
+  .resp-grid-sem   { grid-template-columns: repeat(2, 1fr) !important; }
+  .resp-grid-panel { grid-template-columns: 1fr !important; }
+  .resp-grid-kpis  { grid-template-columns: repeat(2, 1fr) !important; }
+  .resp-grid-proj-main { grid-template-columns: 1fr !important; }
 }

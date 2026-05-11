@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { Home, FolderKanban, TrendingUp, BarChart2, HelpCircle, LogOut } from 'lucide-react';
+import { Home, FolderKanban, TrendingUp, BarChart2, HelpCircle, LogOut, Users } from 'lucide-react';
 
 interface Props { onLogout?: () => void; }
 
@@ -29,6 +29,7 @@ export const SidebarV2: React.FC<Props> = ({ onLogout }) => {
         {link('/',          <Home         size={18} />, 'Hoy',       '¿Cómo estoy ahora?')}
         {link('/proyectos', <FolderKanban size={18} />, 'Proyectos', 'Clientes y cobros')}
         {link('/finanzas',  <TrendingUp   size={18} />, 'Finanzas',  'Movimientos y proyección')}
+        {link('/equipo',    <Users        size={18} />, 'Equipo',    'Freelancers y proveedores')}
         {link('/resumen',   <BarChart2    size={18} />, 'Resumen',   'Año y alertas')}
 
         <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>

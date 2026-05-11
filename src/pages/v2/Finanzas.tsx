@@ -4,7 +4,6 @@ import { Movimientos } from '../Movimientos';
 import { Cuentas } from '../Cuentas';
 import { Deudas } from '../Deudas';
 import { useLedger } from '../../hooks/useLedger';
-import { useSupabaseData } from '../../hooks/useSupabaseData';
 import { useRecurring, RecurringExpense } from '../../hooks/useRecurring';
 import { MESES_ES, CATS_EGRESO } from '../../types';
 
@@ -43,12 +42,12 @@ const lbl: React.CSSProperties = {
 };
 
 const Proyeccion: React.FC = () => {
-  const { movements, debts } = useLedger();
-  const { payments } = useSupabaseData();
+  const { movements, realAccounts, debts, refetch } = useLedger();
   const { items: recurring, add, remove, update, updateAndSync, totalMensual } = useRecurring();
   const [showAdd, setShowAdd] = useState(false);
   const [saving, setSaving] = useState(false);
   const [numMeses, setNumMeses] = useState(3);
+  const [modoVista, setModoVista] = useState<'delta' | 'total'>('delta');
   const [form, setForm] = useState<Omit<RecurringExpense, 'id'>>(mkEmpty);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Partial<RecurringExpense>>({});
@@ -58,20 +57,33 @@ const Proyeccion: React.FC = () => {
   const totalDeudas = debts.filter(d => d.activa).reduce((s, d) => s + d.cuotaMinima, 0);
   const totalFijos = totalMensual + totalDeudas;
 
+  const confirmed = movements.filter(m => m.estado === 'confirmado');
+  const cajaActual =
+    realAccounts.reduce((s, a) => s + a.saldoInicial, 0) +
+    confirmed.filter(m => m.naturaleza === 'ingreso').reduce((s, m) => s + m.valor, 0) -
+    confirmed.filter(m => m.naturaleza === 'egreso').reduce((s, m) => s + m.valor, 0);
+
   const today = new Date();
+  // La proyección siempre arranca desde el PRÓXIMO mes — proyectar es mirar hacia adelante
   const mesesProyectados = Array.from({ length: numMeses }, (_, offset) => {
-    const d = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+    const d = new Date(today.getFullYear(), today.getMonth() + 1 + offset, 1);
     const ms = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 
-    const ingresosProyectados = payments
-      .filter(p => p.status === 'pending' && p.date.startsWith(ms))
-      .reduce((s, p) => s + p.amount, 0);
+    // Fuente única: ledger_movements con estado esperado o facturado
+    const movIngreso = movements.filter(m =>
+      m.naturaleza === 'ingreso' &&
+      (m.estado === 'esperado' || m.estado === 'facturado') &&
+      m.fecha.startsWith(ms)
+    );
+    const movEgreso = movements.filter(m =>
+      m.naturaleza === 'egreso' &&
+      (m.estado === 'esperado' || m.estado === 'facturado') &&
+      m.fecha.startsWith(ms) &&
+      !m.notas?.startsWith('recurring:')
+    );
 
-    // Excluir movimientos recurring (ya contados en gastos fijos)
-    const gastosComprometidos = movements
-      .filter(m => m.naturaleza === 'egreso' && m.estado === 'esperado' && m.fecha.startsWith(ms) && !m.notas?.startsWith('recurring:'))
-      .reduce((s, m) => s + m.valor, 0);
-
+    const ingresosProyectados = movIngreso.reduce((s, m) => s + m.valor, 0);
+    const gastosComprometidos = movEgreso.reduce((s, m) => s + m.valor, 0);
     const totalEgresos = totalMensual + totalDeudas + gastosComprometidos;
     const balance = ingresosProyectados - totalEgresos;
 
@@ -81,7 +93,8 @@ const Proyeccion: React.FC = () => {
       ms, ingresosProyectados, gastosComprometidos,
       gastosRecurrentes: totalMensual, cuotasDeuda: totalDeudas,
       totalEgresos, balance,
-      isCurrentMonth: offset === 0,
+      isCurrentMonth: false,
+      movIngreso, movEgreso,
     };
   });
 
@@ -95,6 +108,7 @@ const Proyeccion: React.FC = () => {
       await add({ ...form, valor });
       setForm(mkEmpty());
       setShowAdd(false);
+      refetch(); // sincronizar movements después de crear recurrentes en DB
     } finally { setSaving(false); }
   };
 
@@ -107,13 +121,14 @@ const Proyeccion: React.FC = () => {
   const balancePeriodo     = totalIngProyectado - totalEgresosPeriodo;
 
   // Running balance per month for mini sparkline
-  let runningBal = 0;
+  const runningBase = modoVista === 'total' ? cajaActual : 0;
+  let runningBal = runningBase;
   const runningBals = mesesProyectados.map(m => {
     runningBal += m.ingresosProyectados - m.totalEgresos;
     return runningBal;
   });
-  const minBal = Math.min(0, ...runningBals);
-  const maxBal = Math.max(1, ...runningBals);
+  const minBal = Math.min(runningBase, ...runningBals);
+  const maxBal = Math.max(runningBase + 1, ...runningBals);
   const balRange = maxBal - minBal || 1;
 
   const [showDetail, setShowDetail] = useState(false);
@@ -169,7 +184,7 @@ const Proyeccion: React.FC = () => {
                 </div>
                 <div style={{ display: 'flex', gap: '0.3rem' }}>
                   <button className="btn btn-primary" style={{ padding: '0.4rem 0.6rem', fontSize: '0.75rem' }}
-                    onClick={async () => { await updateAndSync(r.id, editForm); setEditingId(null); setEditForm({}); }}>
+                    onClick={async () => { await updateAndSync(r.id, editForm); setEditingId(null); setEditForm({}); refetch(); }}>
                     <Check size={13} />
                   </button>
                   <button className="btn btn-outline" style={{ padding: '0.4rem 0.6rem', fontSize: '0.75rem' }}
@@ -204,7 +219,7 @@ const Proyeccion: React.FC = () => {
                 style={{ background: 'none', border: 'none', color: '#52525b', cursor: 'pointer', padding: '0.25rem' }} title="Editar">
                 <Pencil size={13} />
               </button>
-              <button onClick={() => remove(r.id)} style={{ background: 'none', border: 'none', color: '#52525b', cursor: 'pointer', padding: '0.25rem' }} title="Eliminar">
+              <button onClick={async () => { await remove(r.id); refetch(); }} style={{ background: 'none', border: 'none', color: '#52525b', cursor: 'pointer', padding: '0.25rem' }} title="Eliminar">
                 <Trash2 size={13} />
               </button>
             </div>
@@ -277,30 +292,131 @@ const Proyeccion: React.FC = () => {
         )}
       </div>
 
+      {/* Distribución por categorías */}
+      {recurring.filter(r => r.activo).length > 0 && (() => {
+        const catMap: Record<string, number> = {};
+        recurring.filter(r => r.activo).forEach(r => {
+          catMap[r.categoria] = (catMap[r.categoria] || 0) + r.valor;
+        });
+        const catData = Object.entries(catMap).sort((a, b) => b[1] - a[1]);
+        const maxVal = catData[0]?.[1] || 1;
+        const CAT_COLORS = ['#a855f7','#10b981','#06b6d4','#f59e0b','#ef4444','#f97316','#8b5cf6','#ec4899','#14b8a6','#84cc16'];
+        return (
+          <div className="card" style={{ padding: '1.25rem' }}>
+            <h3 style={{ color: '#fff', fontWeight: 700, marginBottom: '1rem' }}>Distribución por Categoría</h3>
+            <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'flex-start' }}>
+              {/* Donut */}
+              <div style={{ flexShrink: 0 }}>
+                {(() => {
+                  const total = catData.reduce((s, [, v]) => s + v, 0) || 1;
+                  const r = 40, cx = 50, cy = 50, circ = 2 * Math.PI * r;
+                  let offset = 0;
+                  return (
+                    <svg width="110" height="110" viewBox="0 0 100 100">
+                      {catData.map(([cat, val], i) => {
+                        const pct = val / total;
+                        const dash = pct * circ;
+                        const rotate = offset * 360;
+                        offset += pct;
+                        return (
+                          <circle key={cat} r={r} cx={cx} cy={cy} fill="none"
+                            stroke={CAT_COLORS[i % CAT_COLORS.length]} strokeWidth="18"
+                            strokeDasharray={`${dash} ${circ - dash}`}
+                            strokeDashoffset={circ * 0.25}
+                            transform={`rotate(${rotate} ${cx} ${cy})`} opacity={0.9}>
+                            <title>{cat}: {fmt(val)}/mes</title>
+                          </circle>
+                        );
+                      })}
+                      <circle r={28} cx={cx} cy={cy} fill="#111" />
+                      <text x="50" y="47" textAnchor="middle" fill="#fff" fontSize="7" fontWeight="700">{fmt(catData.reduce((s,[,v])=>s+v,0))}</text>
+                      <text x="50" y="56" textAnchor="middle" fill="#52525b" fontSize="5">/mes</text>
+                    </svg>
+                  );
+                })()}
+              </div>
+              {/* Barras horizontales */}
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
+                {catData.map(([cat, val], i) => (
+                  <div key={cat}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.2rem' }}>
+                      <span style={{ fontSize: '0.75rem', color: '#a0aec0', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: CAT_COLORS[i % CAT_COLORS.length], display: 'inline-block', flexShrink: 0 }} />
+                        {cat}
+                      </span>
+                      <span style={{ fontSize: '0.75rem', fontWeight: 700, color: CAT_COLORS[i % CAT_COLORS.length] }}>{fmt(val)}</span>
+                    </div>
+                    <div style={{ height: '5px', background: '#1a1a1a', borderRadius: '999px', overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${(val / maxVal) * 100}%`, background: CAT_COLORS[i % CAT_COLORS.length], borderRadius: '999px', transition: 'width 0.4s', opacity: 0.85 }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Selector de escenario + proyección acumulada */}
       <div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
           <h3 style={{ color: '#fff', fontWeight: 700 }}>Proyección acumulada</h3>
-          <div style={{ display: 'flex', gap: '0.3rem', background: '#111', padding: '0.2rem', borderRadius: '10px' }}>
-            {ESCENARIOS.map(e => (
-              <button key={e.value} onClick={() => setNumMeses(e.value)}
-                style={{ padding: '0.35rem 0.75rem', borderRadius: '8px', fontSize: '0.78rem', fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: numMeses === e.value ? '#fff' : 'transparent', color: numMeses === e.value ? '#000' : '#71717a', transition: 'all 0.15s' }}>
-                {e.label}
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            {/* Toggle: solo período vs + caja actual */}
+            <div style={{ display: 'flex', gap: '0.3rem', background: '#111', padding: '0.2rem', borderRadius: '10px' }}>
+              <button onClick={() => setModoVista('delta')}
+                style={{ padding: '0.35rem 0.75rem', borderRadius: '8px', fontSize: '0.78rem', fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: modoVista === 'delta' ? '#fff' : 'transparent', color: modoVista === 'delta' ? '#000' : '#71717a', transition: 'all 0.15s' }}>
+                Solo período
               </button>
-            ))}
+              <button onClick={() => setModoVista('total')}
+                style={{ padding: '0.35rem 0.75rem', borderRadius: '8px', fontSize: '0.78rem', fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: modoVista === 'total' ? '#10b981' : 'transparent', color: modoVista === 'total' ? '#fff' : '#71717a', transition: 'all 0.15s' }}>
+                + Caja actual
+              </button>
+            </div>
+            {/* Selector de escenario */}
+            <div style={{ display: 'flex', gap: '0.3rem', background: '#111', padding: '0.2rem', borderRadius: '10px' }}>
+              {ESCENARIOS.map(e => (
+                <button key={e.value} onClick={() => setNumMeses(e.value)}
+                  style={{ padding: '0.35rem 0.75rem', borderRadius: '8px', fontSize: '0.78rem', fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: numMeses === e.value ? '#fff' : 'transparent', color: numMeses === e.value ? '#000' : '#71717a', transition: 'all 0.15s' }}>
+                  {e.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
         {/* Tarjeta resumen acumulado */}
-        <div className="card" style={{ padding: '1.5rem', borderTop: `3px solid ${balancePeriodo >= 0 ? '#10b98155' : '#ef444433'}`, marginBottom: '1rem' }}>
+        {(() => {
+          const displayBalance = modoVista === 'total' ? cajaActual + balancePeriodo : balancePeriodo;
+          const balColor = displayBalance >= 0 ? '#10b981' : '#ef4444';
+          return (
+        <div className="card" style={{ padding: '1.5rem', borderTop: `3px solid ${displayBalance >= 0 ? '#10b98155' : '#ef444433'}`, marginBottom: '1rem' }}>
+          {modoVista === 'total' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', padding: '0.5rem 0.75rem', background: '#10b98111', borderRadius: '8px', border: '1px solid #10b98133' }}>
+              <span style={{ fontSize: '0.7rem', color: '#10b981', fontWeight: 700 }}>Caja actual</span>
+              <span style={{ fontSize: '0.85rem', color: '#10b981', fontWeight: 800 }}>{fmtK(cajaActual)}</span>
+              <span style={{ fontSize: '0.7rem', color: '#52525b' }}>+</span>
+              <span style={{ fontSize: '0.7rem', color: '#71717a', fontWeight: 700 }}>Período</span>
+              <span style={{ fontSize: '0.85rem', color: balancePeriodo >= 0 ? '#10b981' : '#ef4444', fontWeight: 800 }}>{balancePeriodo >= 0 ? '+' : ''}{fmtK(balancePeriodo)}</span>
+              <span style={{ fontSize: '0.7rem', color: '#52525b' }}>=</span>
+              <span style={{ fontSize: '0.85rem', color: balColor, fontWeight: 800 }}>{fmtK(displayBalance)}</span>
+            </div>
+          )}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.25rem' }}>
             <div>
               <div style={{ fontSize: '0.65rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.5px' }}>
-                Balance acumulado · próximos {numMeses} {numMeses === 1 ? 'mes' : 'meses'}
+                {modoVista === 'total' ? 'Posición total esperada' : 'Balance proyectado'} · {MESES_ES[new Date(today.getFullYear(), today.getMonth() + 1).getMonth()]}
+                {numMeses > 1 && ` → ${MESES_ES[new Date(today.getFullYear(), today.getMonth() + numMeses).getMonth()]}`}
+                {' '}({numMeses} {numMeses === 1 ? 'mes' : 'meses'})
               </div>
-              <div style={{ fontSize: '2.2rem', fontWeight: 900, color: balancePeriodo >= 0 ? '#10b981' : '#ef4444', lineHeight: 1.1, marginTop: '0.25rem' }}>
-                {fmtK(balancePeriodo)}
+              <div style={{ fontSize: '2.2rem', fontWeight: 900, color: balColor, lineHeight: 1.1, marginTop: '0.25rem' }}>
+                {fmtK(displayBalance)}
               </div>
+              {modoVista === 'total' && (
+                <div style={{ fontSize: '0.68rem', color: '#52525b', marginTop: '0.2rem' }}>
+                  Solo el período: <span style={{ color: balancePeriodo >= 0 ? '#10b981' : '#ef4444' }}>{fmtK(balancePeriodo)}</span>
+                </div>
+              )}
             </div>
             <div style={{ display: 'flex', gap: '2rem' }}>
               <div style={{ textAlign: 'right' }}>
@@ -355,7 +471,9 @@ const Proyeccion: React.FC = () => {
           {/* Mini sparkline de balance acumulado mes a mes */}
           {numMeses > 1 && (
             <div>
-              <div style={{ fontSize: '0.62rem', color: '#3f3f46', marginBottom: '0.4rem', textTransform: 'uppercase', fontWeight: 700 }}>Evolución del balance acumulado</div>
+              <div style={{ fontSize: '0.62rem', color: '#3f3f46', marginBottom: '0.4rem', textTransform: 'uppercase', fontWeight: 700 }}>
+                {modoVista === 'total' ? 'Posición total esperada mes a mes' : 'Evolución del balance acumulado'}
+              </div>
               <div style={{ display: 'flex', gap: '3px', alignItems: 'flex-end', height: '50px' }}>
                 {runningBals.map((bal, i) => {
                   const heightPct = Math.max(4, ((bal - minBal) / balRange) * 100);
@@ -370,6 +488,8 @@ const Proyeccion: React.FC = () => {
             </div>
           )}
         </div>
+          );
+        })()}
 
         {/* Desglose por mes (expandible) */}
         <button
@@ -387,20 +507,43 @@ const Proyeccion: React.FC = () => {
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: '0.72rem', color: '#71717a' }}>Cobros</span>
+                    <span style={{ fontSize: '0.72rem', color: '#71717a' }}>Cobros esperados</span>
                     <span style={{ fontWeight: 700, color: '#10b981', fontSize: '0.75rem' }}>{fmtK(m.ingresosProyectados)}</span>
                   </div>
+                  {/* Desglose de ingresos */}
+                  {m.movIngreso.map(mov => (
+                    <div key={mov.id} style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: '0.75rem', borderLeft: '2px solid #10b98133' }}>
+                      <span style={{ fontSize: '0.68rem', color: '#52525b' }} title={mov.descripcion}>
+                        {mov.descripcion.length > 22 ? mov.descripcion.slice(0, 22) + '…' : mov.descripcion}
+                        {mov.estado === 'facturado' && <span style={{ color: '#60a5fa', marginLeft: '0.3rem' }}>· facturado</span>}
+                      </span>
+                      <span style={{ fontSize: '0.68rem', color: '#10b98188' }}>{fmtK(mov.valor)}</span>
+                    </div>
+                  ))}
+                  {m.movIngreso.length === 0 && (
+                    <div style={{ paddingLeft: '0.75rem', fontSize: '0.65rem', color: '#3f3f46' }}>Sin cobros registrados</div>
+                  )}
+                  <div style={{ height: '1px', background: '#1a1a1a', margin: '0.2rem 0' }} />
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: '0.72rem', color: '#71717a' }}>Egresos</span>
+                    <span style={{ fontSize: '0.72rem', color: '#71717a' }}>Egresos comprometidos</span>
                     <span style={{ color: '#ef4444', fontSize: '0.75rem' }}>−{fmtK(m.totalEgresos)}</span>
                   </div>
+                  {/* Desglose de egresos variables */}
+                  {m.movEgreso.map(mov => (
+                    <div key={mov.id} style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: '0.75rem', borderLeft: '2px solid #ef444433' }}>
+                      <span style={{ fontSize: '0.68rem', color: '#52525b' }} title={mov.descripcion}>
+                        {mov.descripcion.length > 22 ? mov.descripcion.slice(0, 22) + '…' : mov.descripcion}
+                      </span>
+                      <span style={{ fontSize: '0.68rem', color: '#ef444488' }}>−{fmtK(mov.valor)}</span>
+                    </div>
+                  ))}
                   <div style={{ height: '1px', background: '#1a1a1a' }} />
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span style={{ fontSize: '0.75rem', color: '#fff', fontWeight: 700 }}>Balance</span>
                     <span style={{ fontWeight: 800, color: m.balance >= 0 ? '#10b981' : '#ef4444', fontSize: '0.82rem' }}>{fmtK(m.balance)}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: '0.65rem', color: '#52525b' }}>Acumulado</span>
+                    <span style={{ fontSize: '0.65rem', color: '#52525b' }}>{modoVista === 'total' ? 'Posición total' : 'Acumulado'}</span>
                     <span style={{ fontSize: '0.65rem', color: runningBals[i] >= 0 ? '#10b981' : '#ef4444' }}>{fmtK(runningBals[i])}</span>
                   </div>
                 </div>
