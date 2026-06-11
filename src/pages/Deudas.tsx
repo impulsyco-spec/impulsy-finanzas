@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Plus, X, Pencil } from 'lucide-react';
 import { useLedger } from '../hooks/useLedger';
 import { supabase } from '../lib/supabase';
+import { hoyISO } from '../lib/dates';
 import { Debt } from '../types';
 
 const fmt = (v: number) => '$' + Math.round(v).toLocaleString('es-CO');
@@ -64,7 +65,7 @@ export const Deudas: React.FC = () => {
     refetch();
   };
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = hoyISO();
 
   const inputStyle: React.CSSProperties = {
     width: '100%', background: '#1a1a1a', border: '1px solid #333', color: '#fff',

@@ -195,7 +195,7 @@ export const CATS_INGRESO = [
 export const CATS_EGRESO = [
   'Ads Paid Media','Producción de Contenido','Fullfillment Trafficker',
   'Fullfillment Edición','Fullfillment Programadores','Fullfillment tecnológico',
-  'Software y Suscripciones','Salario','Infraestructura','Educación','Viáticos','Impuestos','Deudas','Personal','Otro',
+  'Software y Suscripciones','Salario','Bienestar Fundador','Infraestructura','Educación','Viáticos','Impuestos','Deudas','Personal','Otro',
 ];
 
 export const ROLES_EQUIPO = [

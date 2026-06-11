@@ -5,6 +5,7 @@ import { useLedger } from '../hooks/useLedger';
 import { calcKPIs, calcSemaforos } from '../hooks/useFinancials';
 import { AddPaymentModal } from '../components/AddPaymentModal';
 import { supabase } from '../lib/supabase';
+import { hoyISO } from '../lib/dates';
 import { GoogleCalendarButton } from '../components/GoogleCalendarButton';
 import { MESES_ES } from '../types';
 
@@ -92,7 +93,7 @@ export const Dashboard: React.FC = () => {
       const boldAccount = realAccounts.find(a =>
         a.nombre.toLowerCase().includes('bold') || a.nombre.toLowerCase().includes('impulsy')
       );
-      const fechaPago = payment?.date || new Date().toISOString().split('T')[0];
+      const fechaPago = payment?.date || hoyISO();
       const mesIdx = new Date(fechaPago + 'T12:00:00').getMonth();
 
       await supabase.from('ledger_movements').insert({

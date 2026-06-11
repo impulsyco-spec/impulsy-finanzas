@@ -3,6 +3,7 @@ import { Plus, Pencil, Trash2, Check, X, Users, TrendingDown, Calendar } from 'l
 import { useTeam } from '../../hooks/useTeam';
 import { useLedger } from '../../hooks/useLedger';
 import { useSupabaseData } from '../../hooks/useSupabaseData';
+import { hoyISO } from '../../lib/dates';
 import { TeamMember, MESES_ES, ROLES_EQUIPO } from '../../types';
 
 const fmt  = (v: number) => '$' + Math.round(v).toLocaleString('es-CO');
@@ -40,7 +41,7 @@ export const Equipo: React.FC = () => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm]   = useState<Partial<Omit<TeamMember,'id'|'createdAt'>>>({});
   const [filterMember, setFilterMember] = useState('');
-  const [filterMonth, setFilterMonth]   = useState(new Date().toISOString().slice(0,7));
+  const [filterMonth, setFilterMonth]   = useState(hoyISO().slice(0,7));
 
   // Métricas range controls
   const defaultRangeStart = (() => {
@@ -48,7 +49,7 @@ export const Equipo: React.FC = () => {
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
   })();
   const [metStart, setMetStart]     = useState(defaultRangeStart);
-  const [metEnd, setMetEnd]         = useState(new Date().toISOString().slice(0,7));
+  const [metEnd, setMetEnd]         = useState(hoyISO().slice(0,7));
   const [metMember, setMetMember]   = useState('');
 
   // Movimientos asociados a miembros del equipo
@@ -416,7 +417,7 @@ export const Equipo: React.FC = () => {
             </select>
             <input type="month" style={{ ...sel, colorScheme: 'dark' }} value={filterMonth}
               onChange={e => setFilterMonth(e.target.value)} />
-            <button onClick={() => { setFilterMember(''); setFilterMonth(new Date().toISOString().slice(0,7)); }}
+            <button onClick={() => { setFilterMember(''); setFilterMonth(hoyISO().slice(0,7)); }}
               className="btn btn-outline" style={{ padding: '0.45rem 0.75rem', fontSize: '0.8rem' }}>
               Limpiar
             </button>
@@ -504,7 +505,7 @@ export const Equipo: React.FC = () => {
               <option value="">Todo el equipo</option>
               {members.map(m => <option key={m.id} value={m.id}>{m.nombre} · {m.rol}</option>)}
             </select>
-            <button onClick={() => { setMetStart(defaultRangeStart); setMetEnd(new Date().toISOString().slice(0,7)); setMetMember(''); }}
+            <button onClick={() => { setMetStart(defaultRangeStart); setMetEnd(hoyISO().slice(0,7)); setMetMember(''); }}
               className="btn btn-outline" style={{ padding: '0.4rem 0.75rem', fontSize: '0.78rem' }}>
               Resetear
             </button>

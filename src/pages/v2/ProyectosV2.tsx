@@ -5,7 +5,9 @@ import { useLedger } from '../../hooks/useLedger';
 import { calcRentabilidad } from '../../hooks/useFinancials';
 import { AddProjectModal } from '../../components/AddProjectModal';
 import { EditProjectModal } from '../../components/EditProjectModal';
+import { ClientesSection } from './Clientes';
 import { supabase } from '../../lib/supabase';
+import { hoyISO } from '../../lib/dates';
 import { MESES_ES } from '../../types';
 
 const fmt  = (v: number) => '$' + Math.round(v).toLocaleString('es-CO');
@@ -74,8 +76,8 @@ const getVigencia = (startDate: string, durationMonths: number) => {
   return { label: `${daysLeft}d restantes`, color: '#10b981', icon: 'ok', daysLeft };
 };
 
-type Tab = 'proyectos' | 'metricas';
-type StatusFilter = 'todos' | 'activos' | 'porVencer' | 'vencidos' | 'completados';
+type Tab = 'proyectos' | 'clientes' | 'metricas';
+type StatusFilter = 'todos' | 'activos' | 'porVencer' | 'vencidos' | 'pendientesPago' | 'completados';
 
 export const ProyectosV2: React.FC = () => {
   const { clients, projects, loading, refetch } = useSupabaseData();
@@ -99,22 +101,47 @@ export const ProyectosV2: React.FC = () => {
   const mrr             = projects
     .filter(p => p.isRecurring && p.status === 'active')
     .reduce((s, p) => s + p.totalAmount / Math.max(p.installments, 1), 0);
-  // Cobrado y por cobrar: calculados desde ledger_movements — fuente única de verdad
-  const cobradoTotal    = movements.filter(m => m.naturaleza === 'ingreso' && m.estado === 'confirmado' && m.projectId).reduce((s, m) => s + m.valor, 0);
-  // 'vencido' = pago no recibido a tiempo, sigue siendo por cobrar. 'anulado' = excluido intencionalmente.
-  const pendienteTotal  = movements.filter(m => m.naturaleza === 'ingreso' && (m.estado === 'esperado' || m.estado === 'facturado' || m.estado === 'vencido') && m.projectId).reduce((s, m) => s + m.valor, 0);
-  // Total contratado = cobrado + pendiente (desde movimientos — fuente única de verdad)
-  const totalContratado = cobradoTotal + pendienteTotal;
 
-  const visibleProjects = activeProjects.filter(p => {
-    if (filterStatus === 'todos')      return true;
-    if (filterStatus === 'completados') return p.status === 'completed';
+  // Cobrado y por cobrar POR PROYECTO desde ledger_movements — fuente única de verdad.
+  // 'vencido' = pago no recibido a tiempo, sigue siendo por cobrar. 'anulado' = excluido intencionalmente.
+  const projTotals = useMemo(() => {
+    const map: Record<string, { pagado: number; porPagar: number }> = {};
+    for (const m of movements) {
+      if (!m.projectId || m.naturaleza !== 'ingreso') continue;
+      const t = map[m.projectId] || (map[m.projectId] = { pagado: 0, porPagar: 0 });
+      if (m.estado === 'confirmado') t.pagado += m.valor;
+      else if (m.estado === 'esperado' || m.estado === 'facturado' || m.estado === 'vencido') t.porPagar += m.valor;
+    }
+    return map;
+  }, [movements]);
+
+  const tienePendiente = (projId: string) => (projTotals[projId]?.porPagar || 0) > 0;
+
+  const matchesFilter = (p: typeof projects[number], filtro: StatusFilter) => {
+    if (filtro === 'todos')          return true;
+    if (filtro === 'completados')    return p.status === 'completed';
+    if (filtro === 'pendientesPago') return tienePendiente(p.id);
     const v = getVigencia(p.startDate, p.durationMonths);
-    if (filterStatus === 'activos')    return p.status === 'active' && (!v || v.daysLeft > 30);
-    if (filterStatus === 'porVencer')  return v && v.daysLeft >= 0 && v.daysLeft <= 30;
-    if (filterStatus === 'vencidos')   return v && v.daysLeft < 0;
+    if (filtro === 'activos')        return p.status === 'active' && (!v || v.daysLeft > 30);
+    if (filtro === 'porVencer')      return v != null && v.daysLeft >= 0 && v.daysLeft <= 30;
+    if (filtro === 'vencidos')       return v != null && v.daysLeft < 0;
     return true;
-  });
+  };
+
+  const visibleProjects = activeProjects.filter(p => matchesFilter(p, filterStatus));
+
+  // ── KPIs de la vista: cambian según el filtro seleccionado ──
+  const vista = useMemo(() => {
+    const pagado   = visibleProjects.reduce((s, p) => s + (projTotals[p.id]?.pagado || 0), 0);
+    const porPagar = visibleProjects.reduce((s, p) => s + (projTotals[p.id]?.porPagar || 0), 0);
+    const conIngresos = visibleProjects
+      .map(p => rentMap[p.id])
+      .filter(r => r && r.ingresos > 0);
+    const rentProm = conIngresos.length
+      ? conIngresos.reduce((s, r) => s + (r!.margen ?? 0), 0) / conIngresos.length
+      : 0;
+    return { pagado, porPagar, esperado: pagado + porPagar, rentProm };
+  }, [visibleProjects, projTotals, rentMap]);
 
   const getClient = (id: string) => clients.find(c => c.id === id);
   const fmtDate   = (d: string) => new Date(d + 'T12:00:00').toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -191,7 +218,7 @@ export const ProyectosV2: React.FC = () => {
   const markAsPaid = async (movId: string, amount: number) => {
     setMarkingId(movId);
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const today = hoyISO();
       const mesActual = MESES_ES[new Date().getMonth()];
       // Actualizar el movimiento directamente
       await supabase.from('ledger_movements').update({
@@ -230,22 +257,26 @@ export const ProyectosV2: React.FC = () => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
 
-      {/* Header */}
+      {/* Header — el botón de crear proyecto solo aplica en la pestaña Proyectos */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h1 style={{ color: '#fff', fontWeight: 800, fontSize: '2rem' }}>Proyectos</h1>
-        <button className="btn btn-primary" onClick={() => setShowAddProject(true)}
-          style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.6rem 1.2rem' }}>
-          <Plus size={16} /> Nuevo Proyecto
-        </button>
+        <h1 style={{ color: '#fff', fontWeight: 800, fontSize: '2rem' }}>Proyectos y Clientes</h1>
+        {tab === 'proyectos' && (
+          <button className="btn btn-primary" onClick={() => setShowAddProject(true)}
+            style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.6rem 1.2rem' }}>
+            <Plus size={16} /> Nuevo Proyecto
+          </button>
+        )}
       </div>
 
-      {/* KPIs */}
-      <div className="resp-grid-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '0.875rem' }}>
+      {/* KPIs — reaccionan al filtro seleccionado */}
+      {tab !== 'clientes' && (
+      <div className="resp-grid-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: '0.875rem' }}>
         {[
-          { label: 'MRR',              value: fmtK(mrr),            color: '#a855f7', hint: '/mes' },
-          { label: 'Total Contratado', value: fmtK(totalContratado), color: '#fff',    hint: undefined },
-          { label: 'Cobrado',          value: fmtK(cobradoTotal),   color: '#10b981', hint: undefined },
-          { label: 'Por Cobrar',       value: fmtK(pendienteTotal), color: '#06b6d4', hint: undefined },
+          { label: 'Rentabilidad Prom.', value: (vista.rentProm * 100).toFixed(0) + '%', color: vista.rentProm >= 0.3 ? '#10b981' : vista.rentProm >= 0.1 ? '#f59e0b' : '#ef4444', hint: `${visibleProjects.length} proyecto(s) en vista` },
+          { label: 'Total Recibido',     value: fmtK(vista.pagado),   color: '#10b981', hint: undefined },
+          { label: 'Por Pagar',          value: fmtK(vista.porPagar), color: '#06b6d4', hint: undefined },
+          { label: 'Total Esperado',     value: fmtK(vista.esperado), color: '#fff',    hint: 'recibido + por pagar' },
+          { label: 'MRR',                value: fmtK(mrr),            color: '#a855f7', hint: '/mes' },
         ].map(s => (
           <div key={s.label} className="card stat-card" style={{ minHeight: 'auto', padding: '1rem' }}>
             <span className="stat-label">{s.label}</span>
@@ -254,6 +285,7 @@ export const ProyectosV2: React.FC = () => {
           </div>
         ))}
       </div>
+      )}
 
       {/* Alerta proyectos por vencer */}
       {porVencer.length > 0 && (
@@ -269,11 +301,12 @@ export const ProyectosV2: React.FC = () => {
       {tab === 'proyectos' && (
         <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap', alignItems: 'center' }}>
           {([
-            { id: 'todos',      label: 'Todos',          count: activeProjects.length },
-            { id: 'activos',    label: 'Activos',        count: activeProjects.filter(p => { const v = getVigencia(p.startDate, p.durationMonths); return p.status === 'active' && (!v || v.daysLeft > 30); }).length },
-            { id: 'porVencer',  label: '⚠ Por vencer',  count: activeProjects.filter(p => { const v = getVigencia(p.startDate, p.durationMonths); return v && v.daysLeft >= 0 && v.daysLeft <= 30; }).length },
-            { id: 'vencidos',   label: '🔴 Vencidos',   count: activeProjects.filter(p => { const v = getVigencia(p.startDate, p.durationMonths); return v && v.daysLeft < 0; }).length },
-            { id: 'completados',label: 'Completados',    count: activeProjects.filter(p => p.status === 'completed').length },
+            { id: 'todos',          label: '📋 Todos',              count: activeProjects.length },
+            { id: 'activos',        label: '🟢 Activos',            count: activeProjects.filter(p => matchesFilter(p, 'activos')).length },
+            { id: 'porVencer',      label: '⚠️ Por vencer',         count: activeProjects.filter(p => matchesFilter(p, 'porVencer')).length },
+            { id: 'vencidos',       label: '🔴 Vencidos',           count: activeProjects.filter(p => matchesFilter(p, 'vencidos')).length },
+            { id: 'pendientesPago', label: '💰 Pendientes de Pago', count: activeProjects.filter(p => matchesFilter(p, 'pendientesPago')).length },
+            { id: 'completados',    label: '✅ Completados',        count: activeProjects.filter(p => p.status === 'completed').length },
           ] as { id: StatusFilter; label: string; count: number }[]).map(f => (
             <button key={f.id} onClick={() => setFilterStatus(f.id)}
               style={{ padding: '0.35rem 0.875rem', borderRadius: '999px', fontSize: '0.78rem', fontWeight: 600, border: `1px solid ${filterStatus === f.id ? '#fff' : '#2a2a2a'}`, background: filterStatus === f.id ? '#fff' : 'transparent', color: filterStatus === f.id ? '#000' : '#71717a', cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.15s' }}>
@@ -285,13 +318,16 @@ export const ProyectosV2: React.FC = () => {
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: '0.375rem', background: '#111', padding: '0.25rem', borderRadius: '10px', width: 'fit-content' }}>
-        {(['proyectos', 'metricas'] as Tab[]).map(t => (
+        {(['proyectos', 'clientes', 'metricas'] as Tab[]).map(t => (
           <button key={t} onClick={() => setTab(t)}
             style={{ padding: '0.45rem 1rem', borderRadius: '8px', fontSize: '0.82rem', fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: tab === t ? '#fff' : 'transparent', color: tab === t ? '#000' : '#71717a', transition: 'all 0.15s' }}>
-            {t === 'proyectos' ? '📂 Proyectos' : '📊 Métricas & Rentabilidad'}
+            {t === 'proyectos' ? '📂 Proyectos' : t === 'clientes' ? '👥 Clientes' : '📊 Métricas & Rentabilidad'}
           </button>
         ))}
       </div>
+
+      {/* ── TAB: CLIENTES ──────────────────────────────── */}
+      {tab === 'clientes' && <ClientesSection />}
 
       {/* ── TAB: PROYECTOS ─────────────────────────────── */}
       {tab === 'proyectos' && (
@@ -301,6 +337,7 @@ export const ProyectosV2: React.FC = () => {
               const client       = getClient(proj.clientId);
               const paid           = movements.filter(m => m.projectId === proj.id && m.naturaleza === 'ingreso' && m.estado === 'confirmado').reduce((s, m) => s + m.valor, 0);
               const projMovements  = movements.filter(m => m.projectId === proj.id && m.naturaleza === 'ingreso').sort((a, b) => a.fecha.localeCompare(b.fecha));
+              const projGastos     = movements.filter(m => m.projectId === proj.id && m.naturaleza === 'egreso').sort((a, b) => b.fecha.localeCompare(a.fecha));
               const nextMovement   = projMovements.find(m => m.estado === 'esperado');
               const pct          = proj.totalAmount > 0 ? (paid / proj.totalAmount) * 100 : 0;
               const ren          = rentMap[proj.id];
@@ -485,6 +522,35 @@ export const ProyectosV2: React.FC = () => {
                             </div>
                           );
                         })}
+                      </div>
+
+                      {/* Gastos del proyecto — fuente de verdad: movimientos */}
+                      <div style={{ fontSize: '0.7rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700, margin: '1rem 0 0.5rem' }}>
+                        Gastos relacionados ({projGastos.length})
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                        {projGastos.length === 0 && (
+                          <div style={{ fontSize: '0.8rem', color: '#52525b', padding: '0.5rem', textAlign: 'center' }}>
+                            Sin gastos asignados. Regístralos desde Movimientos eligiendo este proyecto.
+                          </div>
+                        )}
+                        {projGastos.map(g => (
+                          <div key={g.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0.75rem', background: '#0a0a0a', borderRadius: '8px', gap: '0.5rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
+                              <span style={{ fontSize: '0.65rem', fontWeight: 600, color: g.estado === 'confirmado' ? '#ef4444' : '#f59e0b', background: g.estado === 'confirmado' ? 'rgba(239,68,68,0.1)' : 'rgba(245,158,11,0.1)', padding: '0.15rem 0.5rem', borderRadius: '999px', flexShrink: 0 }}>
+                                {g.estado === 'confirmado' ? 'Pagado' : 'Por pagar'}
+                              </span>
+                              <span style={{ fontSize: '0.78rem', color: '#71717a', flexShrink: 0 }}>{fmtShort(g.fecha)}</span>
+                              <span style={{ fontSize: '0.78rem', color: '#a0aec0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={g.descripcion}>
+                                {g.descripcion}
+                              </span>
+                              {g.categoria && (
+                                <span style={{ fontSize: '0.68rem', color: '#52525b', flexShrink: 0 }}>· {g.categoria}</span>
+                              )}
+                            </div>
+                            <span style={{ fontWeight: 700, color: '#ef4444', fontSize: '0.85rem', flexShrink: 0 }}>−{fmt(g.valor)}</span>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   )}

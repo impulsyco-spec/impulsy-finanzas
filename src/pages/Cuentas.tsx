@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Plus, X, Pencil, Trash2, Check, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react';
 import { useLedger } from '../hooks/useLedger';
 import { supabase } from '../lib/supabase';
+import { hoyISO } from '../lib/dates';
 import { RealAccount, Pocket, MESES_ES } from '../types';
 
 const fmt = (v: number) => '$' + Math.round(v).toLocaleString('es-CO');
@@ -120,7 +121,7 @@ export const Cuentas: React.FC = () => {
       // Create adjustment movement if balance differs
       if (diff !== 0) {
         await supabase.from('ledger_movements').insert({
-          fecha: new Date().toISOString().split('T')[0],
+          fecha: hoyISO(),
           tipo_movimiento: 'ajuste',
           naturaleza: diff > 0 ? 'ingreso' : 'egreso',
           descripcion: `Ajuste de conciliación — ${editForm.nombre.trim()}`,

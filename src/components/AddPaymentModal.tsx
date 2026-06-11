@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Project, Client } from '../types';
+import { Project, Client, MESES_ES } from '../types';
 import { sendGHLWebhook } from '../lib/ghl';
 import { createCalendarEvents, isGCalConnected } from '../hooks/useGoogleCalendar';
 import { useTRM } from '../hooks/useTRM';
@@ -47,17 +47,37 @@ export const AddPaymentModal: React.FC<Props> = ({ projects, clients, isOpen, on
     setLoading(true);
 
       // 1. Guardar el pago actual
-      const { error } = await supabase.from('payments').insert([{
+      const { data: pagoCreado, error } = await supabase.from('payments').insert([{
         project_id: projectId,
         amount: finalAmountCOP,
         actual_amount: status === 'paid' ? Number(actualAmount) : null,
         date,
         status
-      }]);
-  
+      }]).select().single();
+
       if (error) {
         setLoading(false);
         return alert('Error guardando el pago: ' + error.message);
+      }
+
+      // 1b. Reflejarlo SIEMPRE en ledger_movements (la fuente de verdad de
+      // todos los gráficos y proyecciones) y dejar ambos lados vinculados.
+      const valorMov = status === 'paid' ? (Number(actualAmount) || finalAmountCOP) : finalAmountCOP;
+      const { data: movCreado, error: errMov } = await supabase.from('ledger_movements').insert({
+        fecha: date,
+        tipo_movimiento: 'ingreso_operativo',
+        naturaleza: 'ingreso',
+        descripcion: `Pago ${selectedProject?.name || 'proyecto'}`,
+        valor: valorMov,
+        estado: status === 'paid' ? 'confirmado' : 'esperado',
+        project_id: projectId,
+        client_id: selectedProject?.clientId || null,
+        payment_id: pagoCreado.id,
+        mes: MESES_ES[new Date(date + 'T12:00:00').getMonth()],
+        personal_flag: false,
+      }).select().single();
+      if (!errMov && movCreado) {
+        await supabase.from('payments').update({ ledger_movement_id: movCreado.id }).eq('id', pagoCreado.id);
       }
       
       const clientEmail = clients.find(c => c.id === selectedProject?.clientId)?.email || '';
@@ -122,7 +142,30 @@ export const AddPaymentModal: React.FC<Props> = ({ projects, clients, isOpen, on
             dueDate: dateStr
           });
         }
-        await supabase.from('payments').insert(pendingPayments);
+        const { data: cuotasCreadas } = await supabase.from('payments').insert(pendingPayments).select();
+
+        // Las cuotas futuras también van al ledger como esperadas, vinculadas
+        if (cuotasCreadas && cuotasCreadas.length > 0) {
+          const movsCuotas = cuotasCreadas.map((c: any) => ({
+            fecha: c.date,
+            tipo_movimiento: 'ingreso_operativo',
+            naturaleza: 'ingreso',
+            descripcion: `Cuota ${selectedProject?.name || 'proyecto'}`,
+            valor: Number(c.amount),
+            estado: 'esperado',
+            project_id: projectId,
+            client_id: selectedProject?.clientId || null,
+            payment_id: c.id,
+            mes: MESES_ES[new Date(c.date + 'T12:00:00').getMonth()],
+            personal_flag: false,
+          }));
+          const { data: movsCreados } = await supabase.from('ledger_movements').insert(movsCuotas).select();
+          if (movsCreados) {
+            for (const mv of movsCreados) {
+              await supabase.from('payments').update({ ledger_movement_id: mv.id }).eq('id', mv.payment_id);
+            }
+          }
+        }
 
         if (isGCalConnected() && pendingCalendarPayloads.length > 0) {
           await createCalendarEvents(pendingCalendarPayloads);

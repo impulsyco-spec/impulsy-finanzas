@@ -5,6 +5,7 @@ import { Cuentas } from '../Cuentas';
 import { Deudas } from '../Deudas';
 import { useLedger } from '../../hooks/useLedger';
 import { useRecurring, RecurringExpense } from '../../hooks/useRecurring';
+import { hoyISO } from '../../lib/dates';
 import { MESES_ES, CATS_EGRESO } from '../../types';
 
 const fmt = (v: number) => '$' + Math.round(v).toLocaleString('es-CO');
@@ -29,7 +30,7 @@ const ESCENARIOS = [
 // fechaInicio se inicializa dinámicamente en el componente
 const mkEmpty = (): Omit<RecurringExpense, 'id'> => ({
   nombre: '', valor: 0, categoria: 'Infraestructura', activo: true,
-  duracionMeses: 6, fechaInicio: new Date().toISOString().split('T')[0],
+  duracionMeses: 6, fechaInicio: hoyISO(),
 });
 
 const inp: React.CSSProperties = {

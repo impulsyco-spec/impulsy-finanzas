@@ -2,7 +2,8 @@ import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLedger } from '../../hooks/useLedger';
 import { useSupabaseData } from '../../hooks/useSupabaseData';
-import { calcKPIs, calcSemaforos, calcRentabilidad } from '../../hooks/useFinancials';
+import { calcKPIs, calcSemaforos, calcRentabilidad, cuentaEnPL } from '../../hooks/useFinancials';
+import { hoyISO, fechaISO } from '../../lib/dates';
 import { MESES_ES } from '../../types';
 
 const fmt  = (v: number) => '$' + Math.round(v).toLocaleString('es-CO');
@@ -106,7 +107,7 @@ export const Resumen: React.FC = () => {
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
   }, []);
   const [metStart, setMetStart] = useState(defaultStart);
-  const [metEnd,   setMetEnd]   = useState(new Date().toISOString().slice(0,7));
+  const [metEnd,   setMetEnd]   = useState(hoyISO().slice(0,7));
 
   // ── Datos base (todos los hooks antes de cualquier return) ────
   const safeMovements = useMemo(() => movements   ?? [], [movements]);
@@ -128,10 +129,15 @@ export const Resumen: React.FC = () => {
     return MESES_ES.map((nombre, idx) => {
       const ms   = `${currentYear}-${String(idx+1).padStart(2,'0')}`;
       const conf = safeMovements.filter(m => m.fecha.startsWith(ms) && m.estado === 'confirmado');
-      const ing  = conf.filter(m => m.naturaleza === 'ingreso').reduce((s,m) => s+m.valor, 0);
-      const gas  = conf.filter(m => m.naturaleza === 'egreso').reduce((s,m) => s+m.valor, 0);
+      // P&L: aportes de capital y ajustes no cuentan como ingreso/gasto del negocio
+      const pl   = conf.filter(cuentaEnPL);
+      const ing  = pl.filter(m => m.naturaleza === 'ingreso').reduce((s,m) => s+m.valor, 0);
+      const gas  = pl.filter(m => m.naturaleza === 'egreso').reduce((s,m) => s+m.valor, 0);
+      // Caja: aquí sí entra todo el dinero que se movió de verdad
+      const cajaIng = conf.filter(m => m.naturaleza === 'ingreso').reduce((s,m) => s+m.valor, 0);
+      const cajaGas = conf.filter(m => m.naturaleza === 'egreso').reduce((s,m) => s+m.valor, 0);
       const movs = safeMovements.filter(m => m.fecha.startsWith(ms)).length;
-      caja += ing - gas;
+      caja += cajaIng - cajaGas;
       return { nombre, ms, ing, gas, bal: ing-gas, caja, movs, active: ing>0||gas>0 };
     });
   }, [safeMovements, safeAccounts, currentYear]);
@@ -149,7 +155,7 @@ export const Resumen: React.FC = () => {
   }, [safeMovements]);
 
   const alertasMensual = useMemo(() => {
-    const hoy = new Date().toISOString().split('T')[0];
+    const hoy = hoyISO();
     const list: { nivel: 'rojo'|'amarillo'; msg: string }[] = [];
     if (kpis.runway < 1) list.push({ nivel: 'rojo', msg: `Runway crítico: ${kpis.runway.toFixed(1)} meses` });
     const venc = safeMovements.filter(m => m.naturaleza==='ingreso' && m.estado==='esperado' && m.fechaVencimiento && m.fechaVencimiento < hoy);
@@ -164,7 +170,7 @@ export const Resumen: React.FC = () => {
   const periodMovs = useMemo(() =>
     safeMovements.filter(m => {
       const mo = m.fecha.slice(0,7);
-      return mo >= metStart && mo <= metEnd && m.estado === 'confirmado';
+      return mo >= metStart && mo <= metEnd && m.estado === 'confirmado' && cuentaEnPL(m);
     }),
     [safeMovements, metStart, metEnd]
   );
@@ -244,9 +250,9 @@ export const Resumen: React.FC = () => {
 
   // Cobros esperados próximos 30 días
   const upcomingCobros = useMemo(() => {
-    const hoy   = new Date().toISOString().split('T')[0];
+    const hoy   = hoyISO();
     const futuro = new Date(); futuro.setDate(futuro.getDate()+30);
-    const futStr = futuro.toISOString().split('T')[0];
+    const futStr = fechaISO(futuro);
     return safeMovements
       .filter(m => m.naturaleza==='ingreso' && m.estado==='esperado' && m.fecha >= hoy && m.fecha <= futStr)
       .sort((a,b) => a.fecha.localeCompare(b.fecha));
@@ -260,7 +266,7 @@ export const Resumen: React.FC = () => {
   }, [safeMovements, currentYear]);
 
   const analMovs = useMemo(() =>
-    safeMovements.filter(m => m.fecha.startsWith(String(analYear)) && m.estado==='confirmado'),
+    safeMovements.filter(m => m.fecha.startsWith(String(analYear)) && m.estado==='confirmado' && cuentaEnPL(m)),
     [safeMovements, analYear]
   );
 

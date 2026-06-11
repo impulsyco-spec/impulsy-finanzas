@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { X, ArrowRight } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { hoyISO } from '../lib/dates';
+import { calcFounderStatus } from '../lib/founderRules';
 import {
   TipoMovimiento, TIPO_MOV_LABELS, NATURALEZA_POR_TIPO,
   CATS_INGRESO, CATS_EGRESO, MESES_ES,
@@ -19,6 +21,7 @@ interface Props {
   teamMembers?: TeamMember[];
   editing?: LedgerMovement | null;
   defaultNaturaleza?: 'ingreso' | 'egreso' | 'neutro';
+  movements?: LedgerMovement[]; // para mostrar el saldo personal de la quincena al marcar gasto personal
 }
 
 const TIPOS: TipoMovimiento[] = [
@@ -39,7 +42,7 @@ const TIPO_HINTS: Partial<Record<TipoMovimiento, string>> = {
 };
 
 const empty = {
-  fecha: new Date().toISOString().split('T')[0],
+  fecha: hoyISO(),
   tipo: 'ingreso_operativo' as TipoMovimiento,
   descripcion: '',
   valor: '',
@@ -60,10 +63,14 @@ const empty = {
 };
 
 export const AddLedgerModal: React.FC<Props> = ({
-  isOpen, onClose, onSuccess, realAccounts, pockets, projects, teamMembers = [], editing, defaultNaturaleza,
+  isOpen, onClose, onSuccess, realAccounts, pockets, projects, clients, teamMembers = [], editing, defaultNaturaleza, movements = [],
 }) => {
   const [form, setForm] = useState({ ...empty });
   const [saving, setSaving] = useState(false);
+  const founderStatus = useMemo(
+    () => (movements.length > 0 ? calcFounderStatus(movements) : null),
+    [movements]
+  );
 
   useEffect(() => {
     if (editing) {
@@ -93,7 +100,7 @@ export const AddLedgerModal: React.FC<Props> = ({
         defaultNaturaleza === 'ingreso' ? 'ingreso_operativo' :
         defaultNaturaleza === 'egreso'  ? 'egreso_operativo' :
         defaultNaturaleza === 'neutro'  ? 'transferencia' : 'ingreso_operativo';
-      setForm({ ...empty, fecha: new Date().toISOString().split('T')[0], cuenta_real_id: boldAcc?.id || '', tipo: defaultTipo });
+      setForm({ ...empty, fecha: hoyISO(), cuenta_real_id: boldAcc?.id || '', tipo: defaultTipo });
     }
   }, [editing, isOpen, realAccounts, defaultNaturaleza]);
 
@@ -322,10 +329,13 @@ export const AddLedgerModal: React.FC<Props> = ({
             </>
           ) : (
             <>
-              {/* Categoría */}
+              {/* Categoría — elegir "Personal" marca automáticamente el gasto como personal */}
               <div>
                 <label style={lbl}>Categoría</label>
-                <select style={inp} value={form.categoria} onChange={e => set('categoria', e.target.value)}>
+                <select style={inp} value={form.categoria} onChange={e => {
+                  const v = e.target.value;
+                  setForm(f => ({ ...f, categoria: v, personal_flag: v === 'Personal' ? true : f.personal_flag }));
+                }}>
                   <option value="">Sin categoría</option>
                   {cats.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
@@ -359,16 +369,44 @@ export const AddLedgerModal: React.FC<Props> = ({
             </>
           )}
 
-          {/* Proyecto */}
+          {/* Cliente → Proyecto: primero el cliente, y el proyecto se filtra según el cliente */}
           <div>
-            <label style={lbl}>Proyecto</label>
+            <label style={lbl}>Cliente</label>
+            <select style={inp} value={form.client_id} onChange={e => {
+              const cid = e.target.value;
+              setForm(f => {
+                const projActual = projects.find(p => p.id === f.project_id);
+                return {
+                  ...f,
+                  client_id: cid,
+                  // si el proyecto elegido no es de este cliente, se limpia
+                  project_id: projActual && projActual.clientId === cid ? f.project_id : '',
+                };
+              });
+            }}>
+              <option value="">Sin cliente</option>
+              {clients.map(c => <option key={c.id} value={c.id}>{c.name}{c.company ? ` · ${c.company}` : ''}</option>)}
+            </select>
+            <div style={{ fontSize: '0.65rem', color: '#3f3f46', marginTop: '0.2rem' }}>
+              Al elegir cliente, abajo solo verás sus proyectos.
+            </div>
+          </div>
+
+          {/* Proyecto (filtrado por cliente) */}
+          <div>
+            <label style={lbl}>Proyecto {form.client_id ? 'del cliente' : ''}</label>
             <select style={inp} value={form.project_id} onChange={e => {
-              set('project_id', e.target.value);
               const proj = projects.find(p => p.id === e.target.value);
-              if (proj && !form.client_id) set('client_id', proj.clientId);
+              setForm(f => ({
+                ...f,
+                project_id: e.target.value,
+                client_id: proj ? proj.clientId : f.client_id,
+              }));
             }}>
               <option value="">Sin proyecto</option>
-              {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              {projects
+                .filter(p => !form.client_id || p.clientId === form.client_id)
+                .map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
             <div style={{ fontSize: '0.65rem', color: '#3f3f46', marginTop: '0.2rem' }}>
               Vincula este movimiento a un proyecto específico para trackear su P&L.
@@ -435,16 +473,46 @@ export const AddLedgerModal: React.FC<Props> = ({
               placeholder="Observaciones, número de factura, etc." />
           </div>
 
-          {/* Personal flag — solo para egresos */}
+          {/* Personal flag — solo para egresos. Marcar el checkbox y la categoría "Personal" son lo mismo. */}
           {!isTransfer && naturaleza === 'egreso' && (
             <div style={{ gridColumn: '1 / -1' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', padding: '0.6rem 0.75rem', background: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: '8px' }}>
-                <input type="checkbox" checked={form.personal_flag} onChange={e => set('personal_flag', e.target.checked)}
+                <input type="checkbox" checked={form.personal_flag} onChange={e => {
+                  const checked = e.target.checked;
+                  setForm(f => ({
+                    ...f,
+                    personal_flag: checked,
+                    categoria: checked && !f.categoria ? 'Personal' : (!checked && f.categoria === 'Personal' ? '' : f.categoria),
+                  }));
+                }}
                   style={{ width: '16px', height: '16px', accentColor: '#f59e0b' }} />
                 <span style={{ color: '#f59e0b', fontSize: '0.875rem', fontWeight: 600 }}>
                   ⚠️ Gasto personal pagado con caja empresa
                 </span>
               </label>
+
+              {form.personal_flag && founderStatus && (() => {
+                const valorNum = Number(String(form.valor).replace(/\./g, '')) || 0;
+                const fmtCop = (v: number) => (v < 0 ? '−$' : '$') + Math.abs(Math.round(v)).toLocaleString('es-CO');
+                const despues = founderStatus.disponible - valorNum;
+                const seExcede = despues < 0;
+                return (
+                  <div style={{
+                    marginTop: '0.5rem', padding: '0.6rem 0.75rem', borderRadius: '8px',
+                    background: seExcede ? 'rgba(239,68,68,0.08)' : 'rgba(16,185,129,0.07)',
+                    border: `1px solid ${seExcede ? 'rgba(239,68,68,0.3)' : 'rgba(16,185,129,0.2)'}`,
+                    fontSize: '0.78rem', color: seExcede ? '#ef4444' : '#10b981', lineHeight: 1.5,
+                  }}>
+                    Tuyo disponible esta quincena: <b>{fmtCop(founderStatus.disponible)}</b>
+                    {valorNum > 0 && <> · después de este gasto: <b>{fmtCop(despues)}</b></>}
+                    {seExcede && (
+                      <div style={{ marginTop: '0.25rem', fontWeight: 700 }}>
+                        🛑 Te estás pasando de tu salario. El exceso queda como deuda tuya con Impulsy y se descuenta de tu próximo pago de quincena.
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           )}
         </div>

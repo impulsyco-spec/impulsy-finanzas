@@ -4,6 +4,7 @@ import { useSupabaseData } from '../hooks/useSupabaseData';
 import { AddProjectModal } from '../components/AddProjectModal';
 import { EditProjectModal } from '../components/EditProjectModal';
 import { supabase } from '../lib/supabase';
+import { hoyISO } from '../lib/dates';
 import { Project } from '../types';
 import { sendGHLWebhook } from '../lib/ghl';
 import { createCalendarEvents, isGCalConnected } from '../hooks/useGoogleCalendar';
@@ -57,7 +58,7 @@ export const Projects: React.FC = () => {
     setGeneratingId(project.id);
 
     // Usar la última fecha conocida como base para generar las siguientes
-    const lastDateStr = existingPayments?.[0]?.date || new Date().toISOString().split('T')[0];
+    const lastDateStr = existingPayments?.[0]?.date || hoyISO();
     const baseDate = new Date(lastDateStr + 'T12:00:00');
     const installmentAmt = project.totalAmount / project.installments;
     const newPayments = [];

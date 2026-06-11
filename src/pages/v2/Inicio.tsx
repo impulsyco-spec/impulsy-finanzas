@@ -4,8 +4,10 @@ import { useLedger } from '../../hooks/useLedger';
 import { useSupabaseData } from '../../hooks/useSupabaseData';
 import { useRecurring } from '../../hooks/useRecurring';
 import { useTeam } from '../../hooks/useTeam';
-import { calcKPIs, calcSemaforos } from '../../hooks/useFinancials';
+import { calcKPIs, calcSemaforos, cuentaEnPL } from '../../hooks/useFinancials';
+import { hoyISO, fechaISO } from '../../lib/dates';
 import { AddLedgerModal } from '../../components/AddLedgerModal';
+import { FounderPanel } from '../../components/FounderPanel';
 import { MESES_ES } from '../../types';
 
 const fmt  = (v: number) => '$' + Math.round(v).toLocaleString('es-CO');
@@ -70,12 +72,12 @@ export const Inicio: React.FC = () => {
   const sems     = useMemo(() => calcSemaforos(kpis, movements), [kpis, movements]);
 
   const hoy    = new Date();
-  const hoyStr = hoy.toISOString().split('T')[0];
+  const hoyStr = hoyISO();
 
   // Fecha límite del período seleccionado
   const endDate = new Date(hoy);
   endDate.setDate(endDate.getDate() + periodo.days);
-  const endDateStr = endDate.toISOString().split('T')[0];
+  const endDateStr = fechaISO(endDate);
 
   // ── Cobros en el período — fuente única: ledger_movements ───
   const cobrosEnPeriodo = useMemo(() =>
@@ -146,7 +148,7 @@ export const Inicio: React.FC = () => {
     Array.from({ length: barCount }, (_, i) => {
       const d  = new Date(hoy.getFullYear(), hoy.getMonth() - (barCount - 1) + i, 1);
       const ms = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      const conf = movements.filter(m => m.fecha.startsWith(ms) && m.estado === 'confirmado');
+      const conf = movements.filter(m => m.fecha.startsWith(ms) && m.estado === 'confirmado' && cuentaEnPL(m));
       return {
         label: MESES_ES[d.getMonth()].slice(0, 3),
         ing:   conf.filter(m => m.naturaleza === 'ingreso').reduce((s, m) => s + m.valor, 0),
@@ -211,6 +213,9 @@ export const Inicio: React.FC = () => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', paddingBottom: '5rem' }}>
+
+      {/* Reglas del Fundador */}
+      <FounderPanel movements={movements} realAccounts={realAccounts} kpis={kpis} onRefetch={refetch} />
 
       {/* Hero: Caja Libre + KPIs */}
       <div className="resp-grid-hero" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
@@ -563,6 +568,7 @@ export const Inicio: React.FC = () => {
         realAccounts={realAccounts} pockets={pockets}
         projects={projects} clients={clients}
         teamMembers={teamMembers}
+        movements={movements}
         editing={null}
       />
     </div>

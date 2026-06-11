@@ -6,6 +6,7 @@ import { useSupabaseData } from '../hooks/useSupabaseData';
 import { useTeam } from '../hooks/useTeam';
 import { AddLedgerModal } from '../components/AddLedgerModal';
 import { supabase } from '../lib/supabase';
+import { hoyISO } from '../lib/dates';
 import { LedgerMovement, TIPO_MOV_LABELS, CATS_EGRESO, CATS_INGRESO } from '../types';
 
 const fmt = (v: number) => '$' + Math.round(v).toLocaleString('es-CO');
@@ -29,7 +30,7 @@ export const Movimientos: React.FC = () => {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<LedgerMovement | null>(null);
   const [defaultNaturaleza, setDefaultNaturaleza] = useState<'ingreso' | 'egreso' | 'neutro' | undefined>(undefined);
-  const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+  const currentMonth = hoyISO().slice(0, 7); // YYYY-MM
   const [filters, setFilters] = useState({ tipo: '', naturaleza: '', mes: currentMonth, estado: '', project: '', search: '', categoria: '', orden: 'desc' as 'asc' | 'desc' });
 
   // Bulk edit
@@ -384,6 +385,7 @@ export const Movimientos: React.FC = () => {
         projects={projects}
         clients={clients}
         teamMembers={teamMembers}
+        movements={movements}
         editing={editing}
         defaultNaturaleza={editing ? undefined : defaultNaturaleza}
       />

@@ -3,6 +3,7 @@ import { useLedger } from '../hooks/useLedger';
 import { useSupabaseData } from '../hooks/useSupabaseData';
 import { Bot, X, Send, Settings, ChevronDown, Loader2, RotateCcw, Search } from 'lucide-react';
 import type { LedgerMovement, RealAccount, Debt, Project, Client } from '../types';
+import { fechaISO } from '../lib/dates';
 
 // ── Config ──────────────────────────────────────────────────────
 const OPENAI_MODEL      = 'gpt-4o-mini';
@@ -67,10 +68,9 @@ function buildCompactContext(
   clients: Client[],
 ): string {
   const today = new Date();
-  const todayStr = today.toISOString().slice(0, 10);
+  const todayStr = fechaISO(today);
   const currentMonth = todayStr.slice(0, 7);
-  const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1)
-    .toISOString().slice(0, 7);
+  const lastMonth = fechaISO(new Date(today.getFullYear(), today.getMonth() - 1, 1)).slice(0, 7);
 
   const confirmed = movements.filter(m => m.estado === 'confirmado');
   const pending   = movements.filter(m => m.estado === 'esperado' || m.estado === 'facturado' || m.estado === 'vencido');
@@ -84,8 +84,8 @@ function buildCompactContext(
   // ── Horizontes temporales ────────────────────────────────────
   const in30 = new Date(today); in30.setDate(in30.getDate() + 30);
   const in90 = new Date(today); in90.setDate(in90.getDate() + 90);
-  const in30Str = in30.toISOString().slice(0, 10);
-  const in90Str = in90.toISOString().slice(0, 10);
+  const in30Str = fechaISO(in30);
+  const in90Str = fechaISO(in90);
 
   // ── Comprometida por horizonte (solo egresos pendientes) ─────
   const comprometida30 = pending

@@ -4,10 +4,11 @@ import { useLedger } from '../hooks/useLedger';
 import { useSupabaseData } from '../hooks/useSupabaseData';
 import { AddLedgerModal } from '../components/AddLedgerModal';
 import { supabase } from '../lib/supabase';
+import { hoyISO } from '../lib/dates';
 import { LedgerMovement } from '../types';
 
 const fmt = (v: number) => '$' + Math.round(v).toLocaleString('es-CO');
-const today = new Date().toISOString().split('T')[0];
+const today = hoyISO();
 
 export const PorPagar: React.FC = () => {
   const { movements, realAccounts, pockets, loading, refetch } = useLedger();

@@ -57,6 +57,7 @@ function App() {
             {/* ── V2 — 4 vistas principales ── */}
             <Route path="/"          element={<Inicio />} />
             <Route path="/proyectos" element={<ProyectosV2 />} />
+            <Route path="/clientes"  element={<ProyectosV2 />} />
             <Route path="/finanzas"  element={<Finanzas />} />
             <Route path="/equipo"    element={<Equipo />} />
             <Route path="/resumen"   element={<Resumen />} />

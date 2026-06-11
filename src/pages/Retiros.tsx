@@ -162,6 +162,7 @@ export const Retiros: React.FC = () => {
         onSuccess={() => { refetch(); setModalOpen(false); }}
         realAccounts={realAccounts} pockets={pockets}
         projects={projects} clients={clients}
+        movements={movements}
         editing={null}
       />
     </div>

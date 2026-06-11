@@ -1,6 +1,14 @@
 import { LedgerMovement, RealAccount, Debt, FinancialKPIs, Semaforo, ProjectRentabilidad, Project, Client } from '../types';
+import { hoyISO, fechaISO } from '../lib/dates';
 
-const today = () => new Date().toISOString().split('T')[0];
+// Movimientos que cuentan en utilidad/margen (P&L). Los ajustes de
+// conciliación y los aportes de capital del fundador mueven la caja pero
+// NO son desempeño del negocio: incluirlos infla ingresos y distorsiona
+// el margen (había $9.3M de aportes contados como ingreso operativo).
+export const cuentaEnPL = (m: LedgerMovement) =>
+  m.tipoMovimiento !== 'ajuste' && m.tipoMovimiento !== 'aporte_capital';
+
+const today = () => hoyISO();
 const yearStart = () => `${new Date().getFullYear()}-01-01`;
 const yearEnd   = () => `${new Date().getFullYear()}-12-31`;
 const monthStart = () => {
@@ -45,8 +53,8 @@ export function calcKPIs(
   if (dias !== undefined) {
     const horizonDate = new Date(hoy);
     horizonDate.setDate(horizonDate.getDate() + dias);
-    const horizonStr = horizonDate.toISOString().slice(0, 10);
-    const hoyStr = hoy.toISOString().slice(0, 10);
+    const horizonStr = fechaISO(horizonDate);
+    const hoyStr = fechaISO(hoy);
     pendingHorizon = pending.filter(m => m.fecha >= hoyStr && m.fecha <= horizonStr);
   } else {
     const horizonDate = new Date(hoy.getFullYear(), hoy.getMonth() + horizonte, 1);
@@ -59,7 +67,7 @@ export function calcKPIs(
   const porCobrar        = pending.filter(m => m.naturaleza === 'ingreso').reduce((s, m) => s + m.valor, 0);
   const totalDeudas      = debts.filter(d => d.activa).reduce((s, d) => s + d.saldoActual, 0);
 
-  const ytd = confirmed.filter(m => m.fecha >= yearStart() && m.fecha <= yearEnd());
+  const ytd = confirmed.filter(m => m.fecha >= yearStart() && m.fecha <= yearEnd() && cuentaEnPL(m));
   const ingresosYTD = ytd.filter(m => m.naturaleza === 'ingreso').reduce((s, m) => s + m.valor, 0);
   const gastosYTD   = ytd.filter(m => m.naturaleza === 'egreso').reduce((s, m) => s + m.valor, 0);
   const utilidadYTD = ingresosYTD - gastosYTD;

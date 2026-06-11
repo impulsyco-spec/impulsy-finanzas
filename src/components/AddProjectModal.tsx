@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { hoyISO } from '../lib/dates';
 import { Client, MESES_ES } from '../types';
 import { useTRM } from '../hooks/useTRM';
 import { Plus, Trash2 } from 'lucide-react';
@@ -187,7 +188,7 @@ export const AddProjectModal: React.FC<Props> = ({ clients, isOpen, onClose, onS
         total_amount:    finalAmountCOP,
         installments:    actualInstallments,
         duration_months: Number(durationMonths) || numMonths,
-        start_date:      startDate || new Date().toISOString().split('T')[0],
+        start_date:      startDate || hoyISO(),
         status:          'active',
         is_recurring:    isMRR,
       }]).select().single();

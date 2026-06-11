@@ -1,6 +1,7 @@
 import React from 'react';
 import { useLedger } from '../hooks/useLedger';
 import { calcKPIs, calcSemaforos } from '../hooks/useFinancials';
+import { hoyISO, fechaISO } from '../lib/dates';
 
 const fmt = (v: number) => '$' + Math.round(v).toLocaleString('es-CO');
 
@@ -22,7 +23,7 @@ function buildAlerts(
   kpis: ReturnType<typeof calcKPIs>,
   semaforos: ReturnType<typeof calcSemaforos>
 ): { nivel: 'rojo' | 'amarillo' | 'verde'; titulo: string; detalle: string }[] {
-  const hoy = new Date().toISOString().split('T')[0];
+  const hoy = hoyISO();
   const alerts: { nivel: 'rojo' | 'amarillo' | 'verde'; titulo: string; detalle: string }[] = [];
 
   // Runway bajo
@@ -94,7 +95,7 @@ function buildAlerts(
   // Pagos próximos (próximos 7 días)
   const en7dias = new Date();
   en7dias.setDate(en7dias.getDate() + 7);
-  const enStr = en7dias.toISOString().split('T')[0];
+  const enStr = fechaISO(en7dias);
   const proxPagos = movements.filter(
     m => m.naturaleza === 'egreso' &&
          (m.estado === 'esperado' || m.estado === 'facturado') &&

@@ -12,16 +12,30 @@ export interface RecurringExpense {
   fechaInicio: string; // YYYY-MM-DD
 }
 
-// Crea los movimientos en ledger_movements para un gasto recurrente
+// Crea los movimientos en ledger_movements para un gasto recurrente.
+// Idempotente: nunca crea dos proyecciones del mismo recurrente en el mismo
+// mes, aunque se invoque dos veces (doble clic, re-render, regeneración).
 async function createMovements(id: string, item: Omit<RecurringExpense, 'id'>) {
   const base = new Date(item.fechaInicio + 'T12:00:00');
   const dia  = base.getDate();
   const n    = item.duracionMeses > 0 ? item.duracionMeses : 6;
 
+  const { data: existentes, error: errExist } = await supabase
+    .from('ledger_movements')
+    .select('fecha')
+    .like('notas', `recurring:${id}%`);
+  if (errExist) { console.error('useRecurring createMovements (check):', errExist.message); return; }
+  const mesesOcupados = new Set((existentes || []).map(r => (r.fecha as string).slice(0, 7)));
+
+  const rows = [];
   for (let i = 0; i < n; i++) {
-    const d     = new Date(base.getFullYear(), base.getMonth() + i, dia);
+    // Si el día no existe en el mes (ej. 31 en febrero) se usa el último día
+    const ultimoDia = new Date(base.getFullYear(), base.getMonth() + i + 1, 0).getDate();
+    const d     = new Date(base.getFullYear(), base.getMonth() + i, Math.min(dia, ultimoDia));
     const fecha = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const { error } = await supabase.from('ledger_movements').insert({
+    if (mesesOcupados.has(fecha.slice(0, 7))) continue;
+    mesesOcupados.add(fecha.slice(0, 7));
+    rows.push({
       fecha,
       tipo_movimiento: 'egreso_operativo',
       naturaleza:      'egreso',
@@ -33,8 +47,10 @@ async function createMovements(id: string, item: Omit<RecurringExpense, 'id'>) {
       mes:             MESES_ES[d.getMonth()],
       personal_flag:   false,
     });
-    if (error) console.error('useRecurring createMovements:', error.message);
   }
+  if (rows.length === 0) return;
+  const { error } = await supabase.from('ledger_movements').insert(rows);
+  if (error) console.error('useRecurring createMovements:', error.message);
 }
 
 // Borra movimientos esperados de un gasto recurrente

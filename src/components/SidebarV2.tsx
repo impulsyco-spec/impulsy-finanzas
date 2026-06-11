@@ -27,7 +27,7 @@ export const SidebarV2: React.FC<Props> = ({ onLogout }) => {
 
         <div className="sidebar-section-label">Principal</div>
         {link('/',          <Home         size={18} />, 'Hoy',       '¿Cómo estoy ahora?')}
-        {link('/proyectos', <FolderKanban size={18} />, 'Proyectos', 'Clientes y cobros')}
+        {link('/proyectos', <FolderKanban size={18} />, 'Proyectos y Clientes', 'Contratos, cobros y perfiles')}
         {link('/finanzas',  <TrendingUp   size={18} />, 'Finanzas',  'Movimientos y proyección')}
         {link('/equipo',    <Users        size={18} />, 'Equipo',    'Freelancers y proveedores')}
         {link('/resumen',   <BarChart2    size={18} />, 'Resumen',   'Año y alertas')}
