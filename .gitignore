@@ -24,3 +24,8 @@ dist-ssr
 *.sw?
 
 .vercel
+
+# Variables de entorno (claves secretas — nunca subir)
+.env
+.env.*
+!.env.example
