@@ -1,11 +1,21 @@
 // ── Entidades existentes ───────────────────────────────────────
 
+export type OrigenCliente = 'campanas' | 'referido' | 'organico';
+
+export const ORIGEN_LABELS: Record<OrigenCliente, { label: string; emoji: string; color: string }> = {
+  campanas: { label: 'Campañas', emoji: '📣', color: '#a855f7' },
+  referido: { label: 'Referido', emoji: '🤝', color: '#10b981' },
+  organico: { label: 'Orgánico', emoji: '🌱', color: '#06b6d4' },
+};
+
 export interface Client {
   id: string;
   name: string;
   company: string;
   email?: string;
   phone?: string;
+  origen?: OrigenCliente;   // ¿de dónde vino el cliente?
+  createdAt?: string;       // fecha en que se agregó
 }
 
 export interface Project {

@@ -6,7 +6,7 @@ import { useLedger } from '../../hooks/useLedger';
 import { calcRentabilidad } from '../../hooks/useFinancials';
 import { AddProjectModal } from '../../components/AddProjectModal';
 import { supabase } from '../../lib/supabase';
-import { Client } from '../../types';
+import { Client, ORIGEN_LABELS, OrigenCliente } from '../../types';
 
 const fmt  = (v: number) => '$' + Math.round(v).toLocaleString('es-CO');
 const fmtK = (v: number) => v >= 1_000_000 ? '$' + (v / 1_000_000).toFixed(1) + 'M' : v >= 1_000 ? '$' + (v / 1_000).toFixed(0) + 'K' : fmt(v);
@@ -20,7 +20,7 @@ const statusLabel: Record<string, { label: string; color: string }> = {
   cancelled: { label: 'Cancelado',  color: '#ef4444' },
 };
 
-const emptyForm = { name: '', company: '', email: '', phone: '' };
+const emptyForm = { name: '', company: '', email: '', phone: '', origen: '' };
 
 const inp: React.CSSProperties = {
   width: '100%', background: '#1a1a1a', border: '1px solid #333',
@@ -86,10 +86,35 @@ export const ClientesSection: React.FC = () => {
   const totUtilidad  = clientStats.reduce((s, c) => s + c.utilidad, 0);
   const totPorCobrar = clientStats.reduce((s, c) => s + c.porCobrar, 0);
 
+  // Ingresos por origen de adquisición (alimenta la sección Adquisición)
+  const porOrigen = useMemo(() => {
+    const map: Record<string, { ingresos: number; clientes: number }> = {
+      campanas: { ingresos: 0, clientes: 0 }, referido: { ingresos: 0, clientes: 0 },
+      organico: { ingresos: 0, clientes: 0 }, sin: { ingresos: 0, clientes: 0 },
+    };
+    clientStats.forEach(cs => {
+      const key = cs.client.origen || 'sin';
+      map[key].ingresos += cs.ingresos;
+      map[key].clientes += 1;
+    });
+    return map;
+  }, [clientStats]);
+
+  const setOrigen = async (clientId: string, origen: string) => {
+    const { error } = await supabase.from('clients').update({ origen: origen || null }).eq('id', clientId);
+    if (error) {
+      alert(error.message.includes('origen') && error.code === '42703'
+        ? 'Falta la columna origen: ejecuta supabase-origen-clientes.sql en Supabase.'
+        : 'Error: ' + error.message);
+      return;
+    }
+    refetch();
+  };
+
   const openNew  = () => { setEditing(null); setForm({ ...emptyForm }); setShowForm(true); };
   const openEdit = (c: Client) => {
     setEditing(c);
-    setForm({ name: c.name, company: c.company || '', email: c.email || '', phone: c.phone || '' });
+    setForm({ name: c.name, company: c.company || '', email: c.email || '', phone: c.phone || '', origen: c.origen || '' });
     setShowForm(true);
   };
 
@@ -102,6 +127,7 @@ export const ClientesSection: React.FC = () => {
         company: form.company.trim() || form.name.trim(),
         email: form.email.trim() || null,
         phone: form.phone.trim() || null,
+        origen: form.origen || null,
       };
       const { error } = editing
         ? await supabase.from('clients').update(datos).eq('id', editing.id)
@@ -156,6 +182,24 @@ export const ClientesSection: React.FC = () => {
         ))}
       </div>
 
+      {/* Ingresos por origen de adquisición */}
+      <div className="resp-grid-kpis" style={{ display: 'grid', gridTemplateColumns: porOrigen.sin.clientes > 0 ? 'repeat(4,1fr)' : 'repeat(3,1fr)', gap: '0.875rem' }}>
+        {(Object.entries(ORIGEN_LABELS) as [OrigenCliente, typeof ORIGEN_LABELS[OrigenCliente]][]).map(([key, o]) => (
+          <div key={key} className="card stat-card" style={{ minHeight: 'auto', padding: '1rem', border: `1px solid ${o.color}33` }}>
+            <span className="stat-label" style={{ color: o.color }}>{o.emoji} {o.label}</span>
+            <span className="stat-value" style={{ color: o.color, fontSize: '1.15rem' }}>{fmtK(porOrigen[key].ingresos)}</span>
+            <span style={{ fontSize: '0.62rem', color: '#52525b' }}>{porOrigen[key].clientes} cliente(s)</span>
+          </div>
+        ))}
+        {porOrigen.sin.clientes > 0 && (
+          <div className="card stat-card" style={{ minHeight: 'auto', padding: '1rem', border: '1px dashed #52525b55' }}>
+            <span className="stat-label">❔ Sin clasificar</span>
+            <span className="stat-value" style={{ color: '#71717a', fontSize: '1.15rem' }}>{fmtK(porOrigen.sin.ingresos)}</span>
+            <span style={{ fontSize: '0.62rem', color: '#52525b' }}>{porOrigen.sin.clientes} cliente(s) — abre cada uno y asigna su origen</span>
+          </div>
+        )}
+      </div>
+
       {/* Lista de clientes */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
         {clientStats.map(({ client: c, projs, activos, ingresos, gastos, utilidad, porCobrar, sinProyecto, margen }, idx) => {
@@ -176,6 +220,15 @@ export const ClientesSection: React.FC = () => {
                       <span style={{ color: '#fff', fontWeight: 700 }}>{c.name}</span>
                       {c.company && c.company !== c.name && (
                         <span style={{ fontSize: '0.75rem', color: '#71717a' }}>· {c.company}</span>
+                      )}
+                      {c.origen ? (
+                        <span style={{ fontSize: '0.62rem', background: `${ORIGEN_LABELS[c.origen].color}18`, color: ORIGEN_LABELS[c.origen].color, padding: '0.12rem 0.45rem', borderRadius: '999px', fontWeight: 700 }}>
+                          {ORIGEN_LABELS[c.origen].emoji} {ORIGEN_LABELS[c.origen].label}
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: '0.62rem', background: 'rgba(82,82,91,0.15)', color: '#71717a', padding: '0.12rem 0.45rem', borderRadius: '999px', fontWeight: 600 }}>
+                          ❔ sin origen
+                        </span>
                       )}
                     </div>
                     <div style={{ fontSize: '0.72rem', color: '#52525b', marginTop: '0.15rem' }}>
@@ -218,7 +271,14 @@ export const ClientesSection: React.FC = () => {
                       <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}><Mail size={13} style={{ color: '#52525b' }} />{c.email || 'Sin email'}</span>
                       <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}><Phone size={13} style={{ color: '#52525b' }} />{c.phone || 'Sin teléfono'}</span>
                     </div>
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <select value={c.origen || ''} onChange={e => setOrigen(c.id, e.target.value)}
+                        style={{ background: '#1a1a1a', border: '1px solid #333', color: c.origen ? ORIGEN_LABELS[c.origen].color : '#71717a', padding: '0.35rem 0.5rem', borderRadius: '8px', fontSize: '0.72rem', fontFamily: 'inherit', fontWeight: 600, cursor: 'pointer' }}>
+                        <option value="">❔ Origen…</option>
+                        <option value="campanas">📣 Campañas</option>
+                        <option value="referido">🤝 Referido</option>
+                        <option value="organico">🌱 Orgánico</option>
+                      </select>
                       <button onClick={() => openEdit(c)} className="btn btn-outline" style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
                         <Pencil size={12} /> Editar
                       </button>
@@ -336,6 +396,15 @@ export const ClientesSection: React.FC = () => {
               <div>
                 <label style={lbl}>Nombre *</label>
                 <input style={inp} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Ej. Camila Trujillo" autoFocus />
+              </div>
+              <div>
+                <label style={lbl}>¿De dónde viene?</label>
+                <select style={inp} value={form.origen} onChange={e => setForm(f => ({ ...f, origen: e.target.value }))}>
+                  <option value="">Sin clasificar</option>
+                  <option value="campanas">📣 Campañas (pauta/ads)</option>
+                  <option value="referido">🤝 Referido</option>
+                  <option value="organico">🌱 Orgánico</option>
+                </select>
               </div>
               <div>
                 <label style={lbl}>Empresa</label>

@@ -16,7 +16,11 @@ export function useSupabaseData() {
       supabase.from('payments').select('*')
     ]);
 
-    if (clientsRes.data) setClients(clientsRes.data.map(c => ({...c, id: c.id, email: c.email || ''})));
+    if (clientsRes.data) setClients(clientsRes.data.map(c => ({
+      ...c, id: c.id, email: c.email || '',
+      origen: c.origen || undefined,
+      createdAt: c.created_at ? String(c.created_at).slice(0, 10) : undefined,
+    })));
     if (projectsRes.data) {
       setProjects(projectsRes.data.map(p => ({
         id: p.id,

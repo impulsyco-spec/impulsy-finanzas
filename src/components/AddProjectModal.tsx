@@ -49,6 +49,7 @@ export const AddProjectModal: React.FC<Props> = ({ clients, isOpen, onClose, onS
   const [newClientCompany, setNewClientCompany] = useState('');
   const [newClientEmail, setNewClientEmail]   = useState('');
   const [newClientPhone, setNewClientPhone]   = useState('');
+  const [newClientOrigen, setNewClientOrigen] = useState('');
 
   const [name, setName]                       = useState('');
   const [plan, setPlan]                       = useState('');
@@ -164,6 +165,7 @@ export const AddProjectModal: React.FC<Props> = ({ clients, isOpen, onClose, onS
             company: newClientCompany.trim() || newClientName.trim(),
             email: newClientEmail.trim() || null,
             phone: newClientPhone.trim() || null,
+            origen: newClientOrigen || null,
           }])
           .select().single();
         if (ce) { alert('Error al crear cliente: ' + ce.message); return; }
@@ -319,6 +321,18 @@ export const AddProjectModal: React.FC<Props> = ({ clients, isOpen, onClose, onS
             {isNewClient ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 <div><label style={lbl}>Nombre *</label><input required style={inp} value={newClientName} onChange={e => setNewClientName(e.target.value)} placeholder="Nombre del cliente" /></div>
+                <div>
+                  <label style={lbl}>¿De dónde viene? *</label>
+                  <select style={inp} value={newClientOrigen} onChange={e => setNewClientOrigen(e.target.value)}>
+                    <option value="">Selecciona el origen…</option>
+                    <option value="campanas">📣 Campañas (pauta/ads)</option>
+                    <option value="referido">🤝 Referido</option>
+                    <option value="organico">🌱 Orgánico (redes, web, te buscó)</option>
+                  </select>
+                  <div style={{ fontSize: '0.65rem', color: '#3f3f46', marginTop: '0.2rem' }}>
+                    Alimenta las métricas de Adquisición (ROAS, ROI, CAC).
+                  </div>
+                </div>
                 <div><label style={lbl}>Teléfono / WhatsApp</label><input style={inp} type="tel" value={newClientPhone} onChange={e => setNewClientPhone(e.target.value)} placeholder="Para recordatorios" /></div>
                 <div><label style={lbl}>Empresa</label><input style={inp} value={newClientCompany} onChange={e => setNewClientCompany(e.target.value)} /></div>
                 <div><label style={lbl}>Email</label><input style={inp} type="email" value={newClientEmail} onChange={e => setNewClientEmail(e.target.value)} placeholder="Para Google Calendar" /></div>
