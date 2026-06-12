@@ -121,6 +121,7 @@ export const AddLedgerModal: React.FC<Props> = ({
 
   const terceroLabel = naturaleza === 'egreso' ? 'Proveedor' : 'Tercero';
 
+  // Para ingresos solo se usan dos estados: recibido o esperado ("facturado" se eliminó por decisión de Agustín)
   const estadoOpts = naturaleza === 'egreso'
     ? [
         { v: 'confirmado', l: 'Pagado — Ya salió de mi cuenta' },
@@ -128,7 +129,6 @@ export const AddLedgerModal: React.FC<Props> = ({
       ]
     : [
         { v: 'confirmado', l: 'Recibido — Ya está en mi cuenta' },
-        { v: 'facturado',  l: 'Facturado — Factura enviada, pendiente de cobro' },
         { v: 'esperado',   l: 'Esperado — Acordado, aún no recibido' },
       ];
 

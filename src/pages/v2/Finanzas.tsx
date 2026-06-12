@@ -5,8 +5,9 @@ import { Cuentas } from '../Cuentas';
 import { Deudas } from '../Deudas';
 import { useLedger } from '../../hooks/useLedger';
 import { useRecurring, RecurringExpense } from '../../hooks/useRecurring';
-import { hoyISO } from '../../lib/dates';
-import { MESES_ES, CATS_EGRESO } from '../../types';
+import { hoyISO, fechaISO } from '../../lib/dates';
+import { supabase } from '../../lib/supabase';
+import { MESES_ES, CATS_EGRESO, LedgerMovement } from '../../types';
 
 const fmt = (v: number) => '$' + Math.round(v).toLocaleString('es-CO');
 const fmtK = (v: number) => v >= 1_000_000 ? '$' + (v / 1_000_000).toFixed(1) + 'M' : v >= 1_000 ? '$' + (v / 1_000).toFixed(0) + 'K' : fmt(v);
@@ -134,16 +135,66 @@ const Proyeccion: React.FC = () => {
 
   const [showDetail, setShowDetail] = useState(false);
 
+  // ── Próximos ingresos/gastos según el filtro + atrasados ──────
+  const [showProxIng, setShowProxIng] = useState(false);
+  const [showProxGas, setShowProxGas] = useState(false);
+  const [showFijos, setShowFijos]     = useState(false);
+  const [expandedRec, setExpandedRec] = useState<string | null>(null);
+  const [confirmandoId, setConfirmandoId] = useState<string | null>(null);
+
+  const hoyStr = hoyISO();
+  // La ventana de listados termina donde termina la proyección (mes actual + numMeses)
+  const finVentana = fechaISO(new Date(today.getFullYear(), today.getMonth() + numMeses + 1, 0));
+  const esPendiente = (m: LedgerMovement) => m.estado === 'esperado' || m.estado === 'facturado' || m.estado === 'vencido';
+
+  const proximosIngresos = movements
+    .filter(m => m.naturaleza === 'ingreso' && esPendiente(m) && m.fecha >= hoyStr && m.fecha <= finVentana)
+    .sort((a, b) => a.fecha.localeCompare(b.fecha));
+  const proximosGastos = movements
+    .filter(m => m.naturaleza === 'egreso' && esPendiente(m) && m.fecha >= hoyStr && m.fecha <= finVentana)
+    .sort((a, b) => a.fecha.localeCompare(b.fecha));
+
+  // Atrasados: lo que ya debió entrar o salir y nadie ha confirmado
+  const atrasadosIng = movements
+    .filter(m => m.naturaleza === 'ingreso' && esPendiente(m) && m.fecha < hoyStr)
+    .sort((a, b) => a.fecha.localeCompare(b.fecha));
+  const atrasadosGas = movements
+    .filter(m => m.naturaleza === 'egreso' && esPendiente(m) && m.fecha < hoyStr)
+    .sort((a, b) => a.fecha.localeCompare(b.fecha));
+  const totalAtrasadoIng = atrasadosIng.reduce((s, m) => s + m.valor, 0);
+  const totalAtrasadoGas = atrasadosGas.reduce((s, m) => s + m.valor, 0);
+
+  // Confirmar un atrasado: se marca recibido/pagado HOY y se sincroniza el pago vinculado
+  const confirmarAtrasado = async (m: LedgerMovement) => {
+    setConfirmandoId(m.id);
+    try {
+      const { error } = await supabase.from('ledger_movements').update({
+        estado: 'confirmado', fecha: hoyStr, mes: MESES_ES[new Date().getMonth()],
+        updated_at: new Date().toISOString(),
+      }).eq('id', m.id);
+      if (error) throw error;
+      if (m.paymentId) {
+        await supabase.from('payments').update({ status: 'paid', actual_amount: m.valor }).eq('id', m.paymentId);
+      }
+      refetch();
+    } catch (err: any) {
+      alert('Error: ' + err.message);
+    } finally { setConfirmandoId(null); }
+  };
+
+  const fmtFechaCorta = (d: string) => new Date(d + 'T12:00:00').toLocaleDateString('es-CO', { day: '2-digit', month: 'short' });
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
 
-      {/* Gastos fijos */}
-      <div className="card" style={{ padding: '1.25rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+      {/* Gastos fijos — desplegable para no abarcar la pantalla (order 4) */}
+      <div className="card" style={{ padding: '1.25rem', order: 4 }}>
+        <div onClick={() => setShowFijos(v => !v)}
+          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: showFijos ? '1rem' : 0, cursor: 'pointer' }}>
           <div>
-            <h3 style={{ color: '#fff', fontWeight: 700 }}>Gastos Fijos Mensuales</h3>
+            <h3 style={{ color: '#fff', fontWeight: 700 }}>{showFijos ? '▾' : '▸'} Gastos Fijos Mensuales <span style={{ fontSize: '0.75rem', color: '#52525b', fontWeight: 600 }}>({recurring.filter(r => r.activo).length} activos)</span></h3>
             <p style={{ color: '#52525b', fontSize: '0.78rem', marginTop: '0.2rem' }}>
-              Al registrar un gasto fijo se crean automáticamente los movimientos planificados en la tabla.
+              Toca para {showFijos ? 'ocultar' : 'ver'} el detalle. Cada gasto muestra sus pagos proyectados y realizados.
             </p>
           </div>
           <div style={{ textAlign: 'right' }}>
@@ -152,6 +203,7 @@ const Proyeccion: React.FC = () => {
           </div>
         </div>
 
+        {showFijos && (<>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginBottom: '0.875rem' }}>
           {recurring.map(r => editingId === r.id ? (
             /* ── Fila de edición inline ── */
@@ -201,29 +253,67 @@ const Proyeccion: React.FC = () => {
               )}
             </div>
           ) : (
-            /* ── Fila de visualización ── */
-            <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.75rem', background: r.activo ? '#0d0d0d' : '#0a0a0a', borderRadius: '8px', opacity: r.activo ? 1 : 0.5 }}>
-              <input type="checkbox" checked={r.activo} onChange={() => update(r.id, { activo: !r.activo })}
-                style={{ width: '14px', height: '14px', accentColor: '#10b981', flexShrink: 0 }} />
-              <span style={{ flex: 1, color: '#a0aec0', fontSize: '0.82rem' }}>{r.nombre}</span>
-              <span style={{ fontSize: '0.7rem', color: '#52525b' }}>{r.categoria}</span>
-              {r.fechaInicio && (
-                <span style={{ fontSize: '0.68rem', color: '#52525b' }}>
-                  {new Date(r.fechaInicio + 'T12:00:00').toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: '2-digit' })}
+            /* ── Fila de visualización (clic = ver sus pagos) ── */
+            <React.Fragment key={r.id}>
+              <div onClick={() => setExpandedRec(expandedRec === r.id ? null : r.id)}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.75rem', background: r.activo ? '#0d0d0d' : '#0a0a0a', borderRadius: '8px', opacity: r.activo ? 1 : 0.5, cursor: 'pointer' }}>
+                <span onClick={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center' }}>
+                  <input type="checkbox" checked={r.activo} onChange={() => update(r.id, { activo: !r.activo })}
+                    style={{ width: '14px', height: '14px', accentColor: '#10b981', flexShrink: 0, cursor: 'pointer' }} />
                 </span>
-              )}
-              {r.duracionMeses > 0 && (
-                <span style={{ fontSize: '0.68rem', color: '#52525b' }}>{r.duracionMeses} cuotas</span>
-              )}
-              <span style={{ fontWeight: 700, color: '#ef4444', fontSize: '0.85rem', minWidth: '80px', textAlign: 'right' }}>{fmt(r.valor)}</span>
-              <button onClick={() => { setEditingId(r.id); setEditForm({ nombre: r.nombre, valor: r.valor, categoria: r.categoria, fechaInicio: r.fechaInicio, duracionMeses: r.duracionMeses }); }}
-                style={{ background: 'none', border: 'none', color: '#52525b', cursor: 'pointer', padding: '0.25rem' }} title="Editar">
-                <Pencil size={13} />
-              </button>
-              <button onClick={async () => { await remove(r.id); refetch(); }} style={{ background: 'none', border: 'none', color: '#52525b', cursor: 'pointer', padding: '0.25rem' }} title="Eliminar">
-                <Trash2 size={13} />
-              </button>
-            </div>
+                <span style={{ color: '#52525b', fontSize: '0.7rem', flexShrink: 0 }}>{expandedRec === r.id ? '▾' : '▸'}</span>
+                <span style={{ flex: 1, color: '#a0aec0', fontSize: '0.82rem' }}>{r.nombre}</span>
+                <span style={{ fontSize: '0.7rem', color: '#52525b' }}>{r.categoria}</span>
+                {r.fechaInicio && (
+                  <span style={{ fontSize: '0.68rem', color: '#52525b' }}>
+                    {new Date(r.fechaInicio + 'T12:00:00').toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: '2-digit' })}
+                  </span>
+                )}
+                {r.duracionMeses > 0 && (
+                  <span style={{ fontSize: '0.68rem', color: '#52525b' }}>{r.duracionMeses} cuotas</span>
+                )}
+                <span style={{ fontWeight: 700, color: '#ef4444', fontSize: '0.85rem', minWidth: '80px', textAlign: 'right' }}>{fmt(r.valor)}</span>
+                <button onClick={e => { e.stopPropagation(); setEditingId(r.id); setEditForm({ nombre: r.nombre, valor: r.valor, categoria: r.categoria, fechaInicio: r.fechaInicio, duracionMeses: r.duracionMeses }); }}
+                  style={{ background: 'none', border: 'none', color: '#52525b', cursor: 'pointer', padding: '0.25rem' }} title="Editar">
+                  <Pencil size={13} />
+                </button>
+                <button onClick={async e => { e.stopPropagation(); await remove(r.id); refetch(); }} style={{ background: 'none', border: 'none', color: '#52525b', cursor: 'pointer', padding: '0.25rem' }} title="Eliminar">
+                  <Trash2 size={13} />
+                </button>
+              </div>
+
+              {/* Pagos del gasto fijo — proyectados, pagados y atrasados, en orden */}
+              {expandedRec === r.id && (() => {
+                const pagos = movements
+                  .filter(m => m.notas === `recurring:${r.id}`)
+                  .sort((a, b) => a.fecha.localeCompare(b.fecha));
+                return (
+                  <div style={{ marginLeft: '2rem', display: 'flex', flexDirection: 'column', gap: '0.25rem', padding: '0.25rem 0 0.5rem' }}>
+                    {pagos.length === 0 && (
+                      <div style={{ fontSize: '0.75rem', color: '#52525b', padding: '0.4rem' }}>Sin movimientos vinculados.</div>
+                    )}
+                    {pagos.map(m => {
+                      const pagado   = m.estado === 'confirmado';
+                      const atrasado = !pagado && m.fecha < hoyStr;
+                      const chip = pagado
+                        ? { t: 'Pagado',     c: '#10b981' }
+                        : atrasado
+                        ? { t: 'Atrasado',   c: '#ef4444' }
+                        : { t: 'Proyectado', c: '#f59e0b' };
+                      return (
+                        <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.35rem 0.6rem', background: '#0a0a0a', borderRadius: '6px', gap: '0.5rem' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <span style={{ fontSize: '0.62rem', fontWeight: 700, color: chip.c, background: `${chip.c}18`, padding: '0.1rem 0.45rem', borderRadius: '999px' }}>{chip.t}</span>
+                            <span style={{ fontSize: '0.74rem', color: '#71717a' }}>{fmtFechaCorta(m.fecha)}</span>
+                          </div>
+                          <span style={{ fontSize: '0.78rem', fontWeight: 700, color: pagado ? '#10b981' : '#a0aec0' }}>{fmt(m.valor)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </React.Fragment>
           ))}
 
           {debts.filter(d => d.activa).map(d => (
@@ -291,9 +381,10 @@ const Proyeccion: React.FC = () => {
             <Plus size={14} /> Agregar gasto fijo recurrente
           </button>
         )}
+        </>)}
       </div>
 
-      {/* Distribución por categorías */}
+      {/* Distribución por categorías — barras verticales (order 5) */}
       {recurring.filter(r => r.activo).length > 0 && (() => {
         const catMap: Record<string, number> = {};
         recurring.filter(r => r.activo).forEach(r => {
@@ -301,65 +392,40 @@ const Proyeccion: React.FC = () => {
         });
         const catData = Object.entries(catMap).sort((a, b) => b[1] - a[1]);
         const maxVal = catData[0]?.[1] || 1;
+        const totalCat = catData.reduce((s, [, v]) => s + v, 0);
         const CAT_COLORS = ['#a855f7','#10b981','#06b6d4','#f59e0b','#ef4444','#f97316','#8b5cf6','#ec4899','#14b8a6','#84cc16'];
         return (
-          <div className="card" style={{ padding: '1.25rem' }}>
-            <h3 style={{ color: '#fff', fontWeight: 700, marginBottom: '1rem' }}>Distribución por Categoría</h3>
-            <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'flex-start' }}>
-              {/* Donut */}
-              <div style={{ flexShrink: 0 }}>
-                {(() => {
-                  const total = catData.reduce((s, [, v]) => s + v, 0) || 1;
-                  const r = 40, cx = 50, cy = 50, circ = 2 * Math.PI * r;
-                  let offset = 0;
-                  return (
-                    <svg width="110" height="110" viewBox="0 0 100 100">
-                      {catData.map(([cat, val], i) => {
-                        const pct = val / total;
-                        const dash = pct * circ;
-                        const rotate = offset * 360;
-                        offset += pct;
-                        return (
-                          <circle key={cat} r={r} cx={cx} cy={cy} fill="none"
-                            stroke={CAT_COLORS[i % CAT_COLORS.length]} strokeWidth="18"
-                            strokeDasharray={`${dash} ${circ - dash}`}
-                            strokeDashoffset={circ * 0.25}
-                            transform={`rotate(${rotate} ${cx} ${cy})`} opacity={0.9}>
-                            <title>{cat}: {fmt(val)}/mes</title>
-                          </circle>
-                        );
-                      })}
-                      <circle r={28} cx={cx} cy={cy} fill="#111" />
-                      <text x="50" y="47" textAnchor="middle" fill="#fff" fontSize="7" fontWeight="700">{fmt(catData.reduce((s,[,v])=>s+v,0))}</text>
-                      <text x="50" y="56" textAnchor="middle" fill="#52525b" fontSize="5">/mes</text>
-                    </svg>
-                  );
-                })()}
+          <div className="card" style={{ padding: '1.25rem', order: 5 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+              <h3 style={{ color: '#fff', fontWeight: 700 }}>Distribución por Categoría</h3>
+              <div style={{ textAlign: 'right' }}>
+                <span style={{ fontSize: '0.65rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700, marginRight: '0.5rem' }}>Total</span>
+                <span style={{ fontSize: '1rem', fontWeight: 800, color: '#ef4444' }}>{fmt(totalCat)}/mes</span>
               </div>
-              {/* Barras horizontales */}
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
-                {catData.map(([cat, val], i) => (
-                  <div key={cat}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.2rem' }}>
-                      <span style={{ fontSize: '0.75rem', color: '#a0aec0', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                        <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: CAT_COLORS[i % CAT_COLORS.length], display: 'inline-block', flexShrink: 0 }} />
-                        {cat}
-                      </span>
-                      <span style={{ fontSize: '0.75rem', fontWeight: 700, color: CAT_COLORS[i % CAT_COLORS.length] }}>{fmt(val)}</span>
-                    </div>
-                    <div style={{ height: '5px', background: '#1a1a1a', borderRadius: '999px', overflow: 'hidden' }}>
-                      <div style={{ height: '100%', width: `${(val / maxVal) * 100}%`, background: CAT_COLORS[i % CAT_COLORS.length], borderRadius: '999px', transition: 'width 0.4s', opacity: 0.85 }} />
-                    </div>
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end', height: '180px' }}>
+              {catData.map(([cat, val], i) => {
+                const color = CAT_COLORS[i % CAT_COLORS.length];
+                const hPct = Math.max(6, (val / maxVal) * 100);
+                return (
+                  <div key={cat} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', justifyContent: 'flex-end', minWidth: 0 }}>
+                    <span style={{ fontSize: '0.68rem', fontWeight: 700, color, marginBottom: '0.25rem' }}>{fmtK(val)}</span>
+                    <div style={{ width: '70%', maxWidth: '54px', height: `${hPct * 1.2}px`, background: color, borderRadius: '6px 6px 0 0', opacity: 0.85, transition: 'height 0.4s' }}
+                      title={`${cat}: ${fmt(val)}/mes (${((val / totalCat) * 100).toFixed(0)}%)`} />
+                    <span style={{ fontSize: '0.62rem', color: '#71717a', marginTop: '0.35rem', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%' }} title={cat}>
+                      {cat}
+                    </span>
+                    <span style={{ fontSize: '0.58rem', color: '#52525b' }}>{((val / totalCat) * 100).toFixed(0)}%</span>
                   </div>
-                ))}
-              </div>
+                );
+              })}
             </div>
           </div>
         );
       })()}
 
-      {/* Selector de escenario + proyección acumulada */}
-      <div>
+      {/* Selector de escenario + proyección acumulada — SIEMPRE de primero (order 1) */}
+      <div style={{ order: 1 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
           <h3 style={{ color: '#fff', fontWeight: 700 }}>Proyección acumulada</h3>
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
@@ -553,6 +619,99 @@ const Proyeccion: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* ── PRÓXIMOS INGRESOS / PRÓXIMOS GASTOS (según el filtro) — order 2 ── */}
+      <div style={{ order: 2, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }} className="resp-grid-panel">
+        {[
+          { titulo: 'Próximos ingresos', items: proximosIngresos, color: '#10b981', open: showProxIng, toggle: () => setShowProxIng(v => !v), signo: '' },
+          { titulo: 'Próximos gastos',   items: proximosGastos,   color: '#ef4444', open: showProxGas, toggle: () => setShowProxGas(v => !v), signo: '−' },
+        ].map(sec => (
+          <div key={sec.titulo} className="card" style={{ padding: '1rem 1.25rem' }}>
+            <div onClick={sec.toggle} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <h3 style={{ color: '#fff', fontWeight: 700, fontSize: '0.9rem' }}>{sec.titulo}</h3>
+                <span style={{ fontSize: '0.7rem', color: '#52525b' }}>({sec.items.length}) · hasta {fmtFechaCorta(finVentana)}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <span style={{ color: sec.color, fontWeight: 800, fontSize: '0.9rem' }}>
+                  {sec.signo}{fmtK(sec.items.reduce((s, m) => s + m.valor, 0))}
+                </span>
+                <span style={{ color: '#52525b', fontSize: '0.8rem' }}>{sec.open ? '▾' : '▸'}</span>
+              </div>
+            </div>
+            {sec.open && (
+              <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid #1a1a1a', maxHeight: '280px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                {sec.items.length === 0 && (
+                  <div style={{ fontSize: '0.8rem', color: '#52525b', textAlign: 'center', padding: '0.75rem' }}>
+                    Nada proyectado en este período.
+                  </div>
+                )}
+                {sec.items.map(m => (
+                  <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.4rem 0.6rem', background: '#0a0a0a', borderRadius: '8px', gap: '0.5rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
+                      <span style={{ fontSize: '0.72rem', color: '#71717a', flexShrink: 0, minWidth: '52px' }}>{fmtFechaCorta(m.fecha)}</span>
+                      <span style={{ fontSize: '0.78rem', color: '#a0aec0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.descripcion}>
+                        {m.descripcion}
+                      </span>
+                      {m.notas?.startsWith('recurring:') && (
+                        <span style={{ fontSize: '0.62rem', color: '#a855f7', flexShrink: 0 }}>· recurrente</span>
+                      )}
+                    </div>
+                    <span style={{ fontWeight: 700, color: sec.color, fontSize: '0.8rem', flexShrink: 0 }}>{sec.signo}{fmt(m.valor)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* ── ATRASADOS — order 3 ── */}
+      {(atrasadosIng.length > 0 || atrasadosGas.length > 0) && (
+        <div className="card" style={{ order: 3, padding: '1.25rem', border: '1px solid #ef444433' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <h3 style={{ color: '#ef4444', fontWeight: 700 }}>⏰ Atrasados</h3>
+            <div style={{ display: 'flex', gap: '1.25rem', fontSize: '0.78rem' }}>
+              {totalAtrasadoIng > 0 && <span style={{ color: '#10b981', fontWeight: 700 }}>Por recibir: {fmt(totalAtrasadoIng)}</span>}
+              {totalAtrasadoGas > 0 && <span style={{ color: '#ef4444', fontWeight: 700 }}>Por pagar: {fmt(totalAtrasadoGas)}</span>}
+            </div>
+          </div>
+          <div className="resp-grid-panel" style={{ display: 'grid', gridTemplateColumns: atrasadosIng.length > 0 && atrasadosGas.length > 0 ? '1fr 1fr' : '1fr', gap: '1rem' }}>
+            {[
+              { titulo: 'Cobros de clientes atrasados', items: atrasadosIng, color: '#10b981', accion: '✓ Recibido' },
+              { titulo: 'Pagos atrasados', items: atrasadosGas, color: '#ef4444', accion: '✓ Pagado' },
+            ].filter(s => s.items.length > 0).map(sec => (
+              <div key={sec.titulo}>
+                <div style={{ fontSize: '0.68rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700, marginBottom: '0.5rem' }}>{sec.titulo} ({sec.items.length})</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', maxHeight: '240px', overflowY: 'auto' }}>
+                  {sec.items.map(m => {
+                    const diasAtraso = Math.floor((new Date(hoyStr + 'T12:00:00').getTime() - new Date(m.fecha + 'T12:00:00').getTime()) / 86_400_000);
+                    return (
+                      <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.45rem 0.6rem', background: '#0a0a0a', borderRadius: '8px', gap: '0.5rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
+                          <span style={{ fontSize: '0.62rem', color: '#ef4444', background: 'rgba(239,68,68,0.1)', padding: '0.12rem 0.4rem', borderRadius: '999px', fontWeight: 700, flexShrink: 0 }}>
+                            {diasAtraso}d
+                          </span>
+                          <span style={{ fontSize: '0.78rem', color: '#a0aec0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.descripcion}>
+                            {m.descripcion}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
+                          <span style={{ fontWeight: 700, color: sec.color, fontSize: '0.8rem' }}>{fmt(m.valor)}</span>
+                          <button onClick={() => confirmarAtrasado(m)} disabled={confirmandoId === m.id}
+                            style={{ background: '#fff', color: '#000', border: 'none', borderRadius: '6px', padding: '0.2rem 0.5rem', fontSize: '0.68rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+                            {confirmandoId === m.id ? '...' : sec.accion}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
