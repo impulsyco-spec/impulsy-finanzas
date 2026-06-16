@@ -219,7 +219,7 @@ const AddRecForm: React.FC<{
   const [saving, setSaving] = useState(false);
   return (
     <>
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr', gap: '0.5rem', alignItems: 'flex-end' }}>
+      <div className="resp-form" style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr', gap: '0.5rem', alignItems: 'flex-end' }}>
         <div><label style={lbl}>Nombre</label><input style={inp} value={f.nombre} onChange={e => setF(x => ({ ...x, nombre: e.target.value }))} placeholder="Ej. Arriendo" autoFocus /></div>
         <div><label style={lbl}>Valor COP</label><input style={inp} inputMode="numeric" value={f.valor} onChange={e => setF(x => ({ ...x, valor: fmtInput(e.target.value) }))} placeholder="0" /></div>
         <div><label style={lbl}>Categoría</label>

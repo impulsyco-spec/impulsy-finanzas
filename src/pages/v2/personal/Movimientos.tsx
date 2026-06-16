@@ -52,7 +52,7 @@ export const PersonalMovimientos: React.FC = () => {
 
       {/* Filtros */}
       <div className="card" style={{ padding: '0.875rem 1rem' }}>
-        <div className="resp-grid-kpis" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1.4fr', gap: '0.5rem' }}>
+        <div className="resp-form" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1.4fr', gap: '0.5rem' }}>
           <input type="month" style={inp} value={filtros.mes} onChange={e => setFiltros(f => ({ ...f, mes: e.target.value }))} />
           <select style={inp} value={filtros.naturaleza} onChange={e => setFiltros(f => ({ ...f, naturaleza: e.target.value }))}>
             <option value="">Ingresos y gastos</option>
@@ -126,6 +126,7 @@ export const PersonalMovimientos: React.FC = () => {
       </div>
 
       <button onClick={() => { setEditing(null); setModalOpen(true); }}
+        className="fab"
         style={{ position: 'fixed', bottom: '2rem', right: '2rem', background: GOLD, color: '#000', border: 'none', borderRadius: '999px', padding: '0.875rem 1.5rem', fontWeight: 800, fontSize: '0.9rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', boxShadow: '0 4px 24px rgba(245,158,11,0.35)', zIndex: 50, fontFamily: 'inherit' }}>
         <Plus size={18} /> Registrar
       </button>

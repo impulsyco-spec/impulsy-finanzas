@@ -590,6 +590,7 @@ export const Inicio: React.FC = () => {
       {/* FAB — Registrar movimiento */}
       <button
         onClick={abrirNuevo}
+        className="fab"
         style={{
           position: 'fixed', bottom: '2rem', right: '2rem',
           background: '#fff', color: '#000',

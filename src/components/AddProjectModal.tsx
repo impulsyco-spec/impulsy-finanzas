@@ -308,7 +308,7 @@ export const AddProjectModal: React.FC<Props> = ({ clients, isOpen, onClose, onS
   // ── Render ────────────────────────────────────────────────
   return (
     <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '1rem' }}>
-      <div className="card" style={{ width: '520px', maxHeight: '92vh', overflowY: 'auto', backgroundColor: '#0b0b0b' }}>
+      <div className="card modal-card" style={{ width: '520px', maxWidth: '100%', maxHeight: '92vh', overflowY: 'auto', backgroundColor: '#0b0b0b' }}>
         <h2 style={{ color: '#fff', fontWeight: 800, fontSize: '1.4rem', marginBottom: '1.25rem' }}>Nuevo Proyecto</h2>
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
 
@@ -503,14 +503,14 @@ export const AddProjectModal: React.FC<Props> = ({ clients, isOpen, onClose, onS
             ) : (
               /* ── CUSTOM schedule ─────────────────────────── */
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 100px 28px', gap: '0.4rem' }}>
+                <div className="resp-form" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 100px 28px', gap: '0.4rem' }}>
                   <span style={{ fontSize: '0.7rem', color: '#71717a' }}>Valor ({currency})</span>
                   <span style={{ fontSize: '0.7rem', color: '#71717a' }}>Fecha</span>
                   <span style={{ fontSize: '0.7rem', color: '#71717a' }}>Estado</span>
                   <span />
                 </div>
                 {customRows.map((row, i) => (
-                  <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 115px 28px', gap: '0.4rem', alignItems: 'center' }}>
+                  <div key={i} className="resp-form" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 115px 28px', gap: '0.4rem', alignItems: 'center' }}>
                     <input type="number" step="0.01" value={row.amount} onChange={e => updateRow(i, 'amount', Number(e.target.value))} style={{ ...inp, padding: '0.35rem 0.5rem' }} />
                     <input required type="date" value={row.date} onChange={e => updateRow(i, 'date', e.target.value)} style={{ ...inp, padding: '0.35rem 0.5rem' }} />
                     <select value={row.status} onChange={e => updateRow(i, 'status', e.target.value)} style={{ ...inp, padding: '0.35rem 0.5rem', fontSize: '0.75rem' }}>

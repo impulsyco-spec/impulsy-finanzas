@@ -139,7 +139,7 @@ const NuevaDeudaForm: React.FC<{
   const [saving, setSaving] = useState(false);
   return (
     <div className="card" style={{ padding: '1rem', border: `1px solid ${GOLD}44` }}>
-      <div className="resp-grid-kpis" style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr auto', gap: '0.5rem', alignItems: 'flex-end' }}>
+      <div className="resp-form" style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr auto', gap: '0.5rem', alignItems: 'flex-end' }}>
         <div><label style={lbl}>Acreedor</label><input style={inp} value={f.acreedor} onChange={e => setF(x => ({ ...x, acreedor: e.target.value }))} placeholder="Ej. Tarjeta Bancolombia" autoFocus /></div>
         <div><label style={lbl}>Tipo</label>
           <select style={inp} value={f.tipo} onChange={e => setF(x => ({ ...x, tipo: e.target.value as PersonalDebt['tipo'] }))}>

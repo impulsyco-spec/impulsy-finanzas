@@ -208,7 +208,7 @@ const Proyeccion: React.FC = () => {
           {recurring.map(r => editingId === r.id ? (
             /* ── Fila de edición inline ── */
             <div key={r.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', padding: '0.75rem', background: '#111', borderRadius: '8px', border: '1px solid #2a2a2a' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr auto', gap: '0.4rem', alignItems: 'flex-end' }}>
+              <div className="resp-form" style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr auto', gap: '0.4rem', alignItems: 'flex-end' }}>
                 <div>
                   <label style={lbl}>Nombre</label>
                   <input style={inp} value={editForm.nombre ?? ''} onChange={e => setEditForm(f => ({ ...f, nombre: e.target.value }))} />
@@ -336,7 +336,7 @@ const Proyeccion: React.FC = () => {
 
         {showAdd ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', padding: '0.75rem', background: '#0a0a0a', borderRadius: '10px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr', gap: '0.5rem', alignItems: 'flex-end' }}>
+            <div className="resp-form" style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr', gap: '0.5rem', alignItems: 'flex-end' }}>
               <div>
                 <label style={lbl}>Nombre del gasto</label>
                 <input style={inp} value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} placeholder="Ej. Arriendo oficina" />
@@ -498,7 +498,7 @@ const Proyeccion: React.FC = () => {
           </div>
 
           {/* Desglose de egresos */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '0.75rem', marginBottom: '1.25rem' }}>
+          <div className="resp-grid-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '0.75rem', marginBottom: '1.25rem' }}>
             <div style={{ background: '#0d0d0d', borderRadius: '10px', padding: '0.75rem 1rem' }}>
               <div style={{ fontSize: '0.62rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700, marginBottom: '0.25rem' }}>Gastos fijos</div>
               <div style={{ fontSize: '1rem', fontWeight: 800, color: '#ef4444' }}>{fmtK(totalGasFijos)}</div>

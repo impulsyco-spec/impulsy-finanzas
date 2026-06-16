@@ -468,4 +468,42 @@ tr:hover td {
   .resp-grid-panel { grid-template-columns: 1fr !important; }
   .resp-grid-kpis  { grid-template-columns: repeat(2, 1fr) !important; }
   .resp-grid-proj-main { grid-template-columns: 1fr !important; }
+
+  /* Grids de 3 columnas colapsan a 1 */
+  .resp-grid-3 { grid-template-columns: 1fr !important; }
+
+  /* Formularios e hileras multi-columna apilan verticalmente en móvil */
+  .resp-form { grid-template-columns: 1fr !important; gap: 0.5rem !important; }
+
+  /* Inputs/selects nunca desbordan su contenedor */
+  input, select, textarea { max-width: 100%; }
+
+  /* Botón flotante (FAB) por encima de la barra inferior, sin taparla */
+  .fab { bottom: 5.75rem !important; right: 1rem !important; padding: 0.75rem 1.1rem !important; font-size: 0.82rem !important; }
+
+  /* Barra inferior compacta — soporta hasta 6 ítems sin encimarse */
+  .mobile-nav { gap: 0; padding: 0.5rem 0.15rem; }
+  .mobile-nav a, .mobile-nav button { font-size: 0.55rem !important; padding: 0.35rem 0.1rem !important; gap: 0.12rem !important; min-width: 0; }
+  .mobile-nav svg { width: 17px !important; height: 17px !important; }
+
+  /* Modales: ocupan el ancho disponible y hacen scroll si son largos */
+  .modal-card { width: 100% !important; max-height: 88vh !important; overflow-y: auto !important; }
+
+  /* El título de cada vista no se corta */
+  h1 { font-size: 1.5rem !important; line-height: 1.2 !important; }
+
+  /* Asesor IA: botón a la izquierda y por encima del nav (no lo tapa ni choca con el FAB derecho) */
+  .advisor-fab { bottom: 5.75rem !important; left: 1rem !important; right: auto !important; }
+  /* Panel del asesor: casi pantalla completa, sin tapar el nav inferior */
+  .advisor-panel {
+    bottom: 5.75rem !important; left: 0.75rem !important; right: 0.75rem !important;
+    width: auto !important; max-width: none !important;
+    height: auto !important; max-height: calc(100vh - 8rem) !important;
+  }
+}
+
+/* Teléfonos muy estrechos: los KPIs grandes se apilan en 1 columna */
+@media (max-width: 400px) {
+  .resp-grid-kpis { grid-template-columns: 1fr !important; }
+  .resp-grid-sem  { grid-template-columns: repeat(2, 1fr) !important; }
 }

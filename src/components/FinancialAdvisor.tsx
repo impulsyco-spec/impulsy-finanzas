@@ -462,6 +462,7 @@ export function FinancialAdvisor() {
       <button
         onClick={() => setOpen(o => !o)}
         title="Asesor Financiero IA"
+        className="advisor-fab"
         style={{
           position: 'fixed', bottom: '1.5rem', right: '1.5rem', zIndex: 1200,
           width: 52, height: 52, borderRadius: '50%',
@@ -476,7 +477,7 @@ export function FinancialAdvisor() {
 
       {/* Panel */}
       {open && (
-        <div style={{
+        <div className="advisor-panel" style={{
           position: 'fixed', bottom: '5rem', right: '1.5rem', zIndex: 1200,
           width: 430, maxWidth: 'calc(100vw - 2rem)',
           height: 580, maxHeight: 'calc(100vh - 6rem)',

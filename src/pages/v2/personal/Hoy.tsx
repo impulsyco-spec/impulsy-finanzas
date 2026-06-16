@@ -116,7 +116,7 @@ export const PersonalHoy: React.FC = () => {
             <h3 style={{ color: '#fff', fontWeight: 700, fontSize: '0.9rem' }}>Presupuesto del mes</h3>
             <button onClick={() => navigate('/personal/proyeccion')} style={{ background: 'none', border: 'none', color: '#52525b', fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit' }}>Configurar →</button>
           </div>
-          <div className="resp-grid-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.6rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.6rem' }}>
             {presupuestos.map(p => (
               <div key={p.id} style={{ background: '#0d0d0d', borderRadius: '10px', padding: '0.7rem 0.875rem', border: `1px solid ${p.color}22` }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -255,6 +255,7 @@ export const PersonalHoy: React.FC = () => {
 
       {/* FAB */}
       <button onClick={() => setModalOpen(true)}
+        className="fab"
         style={{ position: 'fixed', bottom: '2rem', right: '2rem', background: GOLD, color: '#000', border: 'none', borderRadius: '999px', padding: '0.875rem 1.5rem', fontWeight: 800, fontSize: '0.9rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', boxShadow: '0 4px 24px rgba(245,158,11,0.35)', zIndex: 50, fontFamily: 'inherit' }}>
         <Plus size={18} /> Registrar
       </button>

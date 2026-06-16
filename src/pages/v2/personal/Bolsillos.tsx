@@ -153,7 +153,7 @@ const NuevaMetaForm: React.FC<{
   const [saving, setSaving] = useState(false);
   return (
     <div className="card" style={{ padding: '1rem', border: `1px solid ${GOLD}44` }}>
-      <div className="resp-grid-kpis" style={{ display: 'grid', gridTemplateColumns: 'auto 2fr 1fr 1fr auto', gap: '0.5rem', alignItems: 'flex-end' }}>
+      <div className="resp-form" style={{ display: 'grid', gridTemplateColumns: 'auto 2fr 1fr 1fr auto', gap: '0.5rem', alignItems: 'flex-end' }}>
         <div>
           <label style={lbl}>Emoji</label>
           <select style={{ ...inp, width: '70px' }} value={f.emoji} onChange={e => setF(x => ({ ...x, emoji: e.target.value }))}>

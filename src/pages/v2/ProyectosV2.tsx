@@ -623,7 +623,7 @@ export const ProyectosV2: React.FC = () => {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
 
           {/* KPIs globales */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '1rem' }}>
+          <div className="resp-grid-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '1rem' }}>
             {[
               { label: 'Utilidad Total',   value: fmtK(totalUtilidad), color: totalUtilidad >= 0 ? '#10b981' : '#ef4444' },
               { label: 'Gastos Asignados', value: fmtK(totalGastos),   color: '#ef4444' },
