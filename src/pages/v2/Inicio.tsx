@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Plus, TrendingUp, TrendingDown } from 'lucide-react';
+import { Plus, TrendingUp, TrendingDown, AlertCircle, Clock } from 'lucide-react';
 import { useLedger } from '../../hooks/useLedger';
 import { useSupabaseData } from '../../hooks/useSupabaseData';
 import { useRecurring } from '../../hooks/useRecurring';
@@ -8,7 +8,7 @@ import { calcKPIs, calcSemaforos, cuentaEnPL } from '../../hooks/useFinancials';
 import { hoyISO, fechaISO } from '../../lib/dates';
 import { AddLedgerModal } from '../../components/AddLedgerModal';
 import { FounderPanel } from '../../components/FounderPanel';
-import { MESES_ES } from '../../types';
+import { MESES_ES, LedgerMovement } from '../../types';
 
 const fmt  = (v: number) => '$' + Math.round(v).toLocaleString('es-CO');
 const fmtK = (v: number) => {
@@ -57,14 +57,90 @@ const MiniBar = ({ data }: { data: { label: string; ing: number; gas: number }[]
   );
 };
 
+// ── Panel reutilizable de movimientos: preview de 3, expandible. Clic en fila abre su editor ──
+const PREVIEW = 3;
+const PanelMovs: React.FC<{
+  titulo: string;
+  icon: React.ReactNode;
+  color: string;
+  signo: '' | '−';
+  items: LedgerMovement[];
+  sub: (m: LedgerMovement) => string;
+  onSelect: (m: LedgerMovement) => void;
+  vacio: string;
+  atrasado?: boolean;        // muestra días de atraso y borde de alerta
+  totalLabel: string;
+}> = ({ titulo, icon, color, signo, items, sub, onSelect, vacio, atrasado, totalLabel }) => {
+  const [expandido, setExpandido] = useState(false);
+  const total = items.reduce((s, m) => s + m.valor, 0);
+  const dias = (f: string) => Math.floor((Date.now() - new Date(f + 'T12:00:00').getTime()) / 86_400_000);
+  const visibles = expandido ? items : items.slice(0, PREVIEW);
+  const ocultos = items.length - PREVIEW;
+  return (
+    <div className="card" style={{ padding: '1.25rem', border: atrasado && items.length > 0 ? `1px solid ${color}44` : undefined }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+        {icon}
+        <h3 style={{ color: '#fff', fontWeight: 700, fontSize: '0.9rem' }}>{titulo}</h3>
+        {items.length > 0 && (
+          <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: '#52525b', fontWeight: 600 }}>({items.length})</span>
+        )}
+      </div>
+      {items.length > 0 ? (
+        <>
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {visibles.map(m => (
+              <div key={m.id} onClick={() => onSelect(m)} title="Clic para ver / marcar / editar"
+                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '0.5rem', margin: '0 -0.5rem', borderBottom: '1px solid #1a1a1a', cursor: 'pointer', borderRadius: '6px', transition: 'background 0.12s' }}
+                onMouseEnter={e => (e.currentTarget.style.background = '#161616')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: '0.8rem', color: '#a0aec0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.descripcion}</div>
+                  <div style={{ fontSize: '0.65rem', color: '#52525b', marginTop: '0.1rem' }}>{sub(m)}</div>
+                </div>
+                <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: '0.75rem' }}>
+                  <div style={{ fontSize: '0.82rem', color, fontWeight: 700 }}>{signo}{fmt(m.valor)}</div>
+                  <div style={{ fontSize: '0.62rem', color: atrasado ? color : '#52525b' }}>
+                    {atrasado ? `hace ${dias(m.fecha)}d · ${fmtDate(m.fecha)}` : fmtDate(m.fecha)}
+                    {m.estado === 'facturado' && <span style={{ color: '#60a5fa', marginLeft: '4px' }}>· facturado</span>}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Ver más / Ver menos */}
+          {ocultos > 0 && (
+            <button onClick={() => setExpandido(v => !v)}
+              style={{ width: '100%', marginTop: '0.5rem', padding: '0.4rem', background: 'transparent', border: 'none', color: '#71717a', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}>
+              {expandido ? '▲ Ver menos' : `▼ Ver ${ocultos} más`}
+            </button>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid #1a1a1a' }}>
+            <span style={{ fontSize: '0.7rem', color: '#52525b' }}>{totalLabel}</span>
+            <span style={{ fontSize: '0.85rem', color, fontWeight: 800 }}>{signo}{fmtK(total)}</span>
+          </div>
+        </>
+      ) : (
+        <div style={{ color: '#52525b', fontSize: '0.82rem', textAlign: 'center', padding: '2.5rem 0' }}>{vacio}</div>
+      )}
+    </div>
+  );
+};
+
 export const Inicio: React.FC = () => {
   const { movements, realAccounts, pockets, debts, loading: loadLedger, refetch } = useLedger();
   const { clients, projects } = useSupabaseData();
   const { totalMensual: totalRecurring } = useRecurring();
   const { members: teamMembers } = useTeam();
   const [modalOpen, setModalOpen]   = useState(false);
+  const [editingMov, setEditingMov] = useState<LedgerMovement | null>(null);
   const [periodoIdx, setPeriodoIdx] = useState(1); // default: 1 mes
   const [showInsights, setShowInsights] = useState(false);
+
+  const abrirNuevo   = () => { setEditingMov(null); setModalOpen(true); };
+  const abrirEdicion = (m: LedgerMovement) => { setEditingMov(m); setModalOpen(true); };
+  const cerrarModal  = () => { setModalOpen(false); setEditingMov(null); };
 
   const periodo  = PERIODOS[periodoIdx];
   // horizonte = el período seleccionado: la comprometida solo cuenta egresos dentro de esos meses
@@ -114,6 +190,30 @@ export const Inicio: React.FC = () => {
       )
       .sort((a, b) => a.fecha.localeCompare(b.fecha)),
     [movements, hoyStr, endDateStr]
+  );
+
+  // ── ATRASADOS: pendientes cuya fecha ya pasó (todo el histórico, no solo período) ──
+  // Cobros pendientes por recibir: ingresos que debieron entrar y no se han confirmado
+  const cobrosAtrasados = useMemo(() =>
+    movements
+      .filter(m =>
+        m.naturaleza === 'ingreso' &&
+        (m.estado === 'esperado' || m.estado === 'facturado' || m.estado === 'vencido') &&
+        m.fecha < hoyStr
+      )
+      .sort((a, b) => a.fecha.localeCompare(b.fecha)),
+    [movements, hoyStr]
+  );
+  // Gastos pendientes: obligaciones que debieron pagarse y siguen abiertas
+  const gastosAtrasados = useMemo(() =>
+    movements
+      .filter(m =>
+        m.naturaleza === 'egreso' &&
+        (m.estado === 'esperado' || m.estado === 'facturado' || m.estado === 'vencido') &&
+        m.fecha < hoyStr
+      )
+      .sort((a, b) => a.fecha.localeCompare(b.fecha)),
+    [movements, hoyStr]
   );
 
   // ── Proyección acumulada del período ────────────────────────
@@ -340,108 +440,51 @@ export const Inicio: React.FC = () => {
         </div>
       </div>
 
-      {/* ── COBROS ESPERADOS + PRÓXIMOS GASTOS ──────────────────── */}
+      {/* ── COBROS ESPERADOS + PRÓXIMOS GASTOS (futuros, en el período) ── */}
       <div className="resp-grid-panel" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-
-        {/* Cobros esperados */}
-        <div className="card" style={{ padding: '1.25rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-            <TrendingUp size={14} style={{ color: '#10b981' }} />
-            <h3 style={{ color: '#fff', fontWeight: 700, fontSize: '0.9rem' }}>
-              Cobros esperados — {periodo.label}
-            </h3>
-            {cobrosEnPeriodo.length > 0 && (
-              <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: '#52525b', fontWeight: 600 }}>
-                ({cobrosEnPeriodo.length})
-              </span>
-            )}
-          </div>
-
-          {cobrosEnPeriodo.length > 0 ? (
-            <>
-              <div style={{ maxHeight: '260px', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-                {cobrosEnPeriodo.map(m => (
-                  <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '0.5rem 0', borderBottom: '1px solid #1a1a1a' }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: '0.8rem', color: '#a0aec0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.descripcion}</div>
-                      <div style={{ fontSize: '0.65rem', color: '#52525b', marginTop: '0.1rem' }}>
-                        {m.projectId ? getProjectName(m.projectId) : (clients.find(c => c.id === m.clientId)?.name || '')}
-                      </div>
-                    </div>
-                    <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: '0.75rem' }}>
-                      <div style={{ fontSize: '0.82rem', color: '#10b981', fontWeight: 700 }}>{fmt(m.valor)}</div>
-                      <div style={{ fontSize: '0.62rem', color: '#52525b' }}>
-                        {fmtDate(m.fecha)}
-                        {m.estado === 'facturado' && <span style={{ color: '#60a5fa', marginLeft: '4px' }}>· facturado</span>}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.75rem', paddingTop: '0.5rem', borderTop: '1px solid #1a1a1a' }}>
-                <span style={{ fontSize: '0.7rem', color: '#52525b' }}>Total esperado</span>
-                <span style={{ fontSize: '0.85rem', color: '#10b981', fontWeight: 800 }}>{fmtK(totalCobros)}</span>
-              </div>
-            </>
-          ) : (
-            <div style={{ color: '#52525b', fontSize: '0.82rem', textAlign: 'center', padding: '2.5rem 0' }}>
-              Sin cobros registrados para los próximos {periodo.label}.
-            </div>
-          )}
-        </div>
-
-        {/* Próximos gastos */}
-        <div className="card" style={{ padding: '1.25rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-            <TrendingDown size={14} style={{ color: '#ef4444' }} />
-            <h3 style={{ color: '#fff', fontWeight: 700, fontSize: '0.9rem' }}>
-              Próximos gastos — {periodo.label}
-            </h3>
-            {todosGastosEnPeriodo.length > 0 && (
-              <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: '#52525b', fontWeight: 600 }}>
-                ({todosGastosEnPeriodo.length})
-              </span>
-            )}
-          </div>
-
-          {todosGastosEnPeriodo.length > 0 ? (
-            <>
-              <div style={{ maxHeight: '260px', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-                {todosGastosEnPeriodo.map(m => (
-                  <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '0.5rem 0', borderBottom: '1px solid #1a1a1a' }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: '0.8rem', color: '#a0aec0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.descripcion}</div>
-                      <div style={{ fontSize: '0.65rem', color: '#52525b', marginTop: '0.1rem' }}>
-                        {m.tercero || (m.projectId ? getProjectName(m.projectId) : '')}
-                        {m.notas?.startsWith('recurring:') && (
-                          <span style={{ color: '#a855f7', marginLeft: '4px' }}>· recurrente</span>
-                        )}
-                      </div>
-                    </div>
-                    <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: '0.75rem' }}>
-                      <div style={{ fontSize: '0.82rem', color: '#ef4444', fontWeight: 700 }}>−{fmt(m.valor)}</div>
-                      <div style={{ fontSize: '0.62rem', color: '#52525b' }}>
-                        {fmtDate(m.fecha)}
-                        {m.estado === 'facturado' && <span style={{ color: '#60a5fa', marginLeft: '4px' }}>· facturado</span>}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.75rem', paddingTop: '0.5rem', borderTop: '1px solid #1a1a1a' }}>
-                <span style={{ fontSize: '0.7rem', color: '#52525b' }}>Total proyectado</span>
-                <span style={{ fontSize: '0.85rem', color: '#ef4444', fontWeight: 800 }}>
-                  −{fmtK(todosGastosEnPeriodo.reduce((s, m) => s + m.valor, 0))}
-                </span>
-              </div>
-            </>
-          ) : (
-            <div style={{ color: '#52525b', fontSize: '0.82rem', textAlign: 'center', padding: '2.5rem 0' }}>
-              Sin gastos registrados para los próximos {periodo.label}.
-            </div>
-          )}
-        </div>
+        <PanelMovs
+          titulo={`Cobros esperados — ${periodo.label}`}
+          icon={<TrendingUp size={14} style={{ color: '#10b981' }} />}
+          color="#10b981" signo="" items={cobrosEnPeriodo}
+          sub={m => m.projectId ? getProjectName(m.projectId) : (clients.find(c => c.id === m.clientId)?.name || '')}
+          onSelect={abrirEdicion}
+          vacio={`Sin cobros registrados para los próximos ${periodo.label}.`}
+          totalLabel="Total esperado"
+        />
+        <PanelMovs
+          titulo={`Próximos gastos — ${periodo.label}`}
+          icon={<TrendingDown size={14} style={{ color: '#ef4444' }} />}
+          color="#ef4444" signo="−" items={todosGastosEnPeriodo}
+          sub={m => (m.tercero || (m.projectId ? getProjectName(m.projectId) : '')) + (m.notas?.startsWith('recurring:') ? ' · recurrente' : '')}
+          onSelect={abrirEdicion}
+          vacio={`Sin gastos registrados para los próximos ${periodo.label}.`}
+          totalLabel="Total proyectado"
+        />
       </div>
+
+      {/* ── COBROS PENDIENTES POR RECIBIR + GASTOS PENDIENTES (atrasados) ── */}
+      {(cobrosAtrasados.length > 0 || gastosAtrasados.length > 0) && (
+        <div className="resp-grid-panel" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+          <PanelMovs
+            titulo="Cobros pendientes por recibir"
+            icon={<Clock size={14} style={{ color: '#f59e0b' }} />}
+            color="#f59e0b" signo="" items={cobrosAtrasados} atrasado
+            sub={m => m.projectId ? getProjectName(m.projectId) : (clients.find(c => c.id === m.clientId)?.name || '')}
+            onSelect={abrirEdicion}
+            vacio="Todo cobrado al día ✓"
+            totalLabel="Total por recibir (vencido)"
+          />
+          <PanelMovs
+            titulo="Gastos pendientes (obligaciones)"
+            icon={<AlertCircle size={14} style={{ color: '#ef4444' }} />}
+            color="#ef4444" signo="−" items={gastosAtrasados} atrasado
+            sub={m => (m.tercero || (m.projectId ? getProjectName(m.projectId) : '')) + (m.notas?.startsWith('recurring:') ? ' · recurrente' : '')}
+            onSelect={abrirEdicion}
+            vacio="Sin obligaciones vencidas ✓"
+            totalLabel="Total por pagar (vencido)"
+          />
+        </div>
+      )}
 
       {/* ── PROYECCIÓN ACUMULADA ─────────────────────────────────── */}
       <div className="card" style={{ padding: '1.25rem', borderTop: `3px solid ${balanceProyectado >= 0 ? '#10b98155' : '#ef444433'}` }}>
@@ -546,7 +589,7 @@ export const Inicio: React.FC = () => {
 
       {/* FAB — Registrar movimiento */}
       <button
-        onClick={() => setModalOpen(true)}
+        onClick={abrirNuevo}
         style={{
           position: 'fixed', bottom: '2rem', right: '2rem',
           background: '#fff', color: '#000',
@@ -563,13 +606,13 @@ export const Inicio: React.FC = () => {
 
       <AddLedgerModal
         isOpen={modalOpen}
-        onClose={() => setModalOpen(false)}
-        onSuccess={() => { refetch(); setModalOpen(false); }}
+        onClose={cerrarModal}
+        onSuccess={() => { refetch(); cerrarModal(); }}
         realAccounts={realAccounts} pockets={pockets}
         projects={projects} clients={clients}
         teamMembers={teamMembers}
         movements={movements}
-        editing={null}
+        editing={editingMov}
       />
     </div>
   );
