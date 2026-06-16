@@ -183,6 +183,11 @@ export const AddProjectModal: React.FC<Props> = ({ clients, isOpen, onClose, onS
         ? customRows[0]?.date
         : firstPaymentDate;
 
+      // Origen del proyecto: si es cliente nuevo, el elegido; si es existente, hereda el del cliente
+      const origenProyecto = isNewClient
+        ? (newClientOrigen || null)
+        : (clients.find(c => c.id === finalClientId)?.origen || null);
+
       const { data: project, error: pe } = await supabase.from('projects').insert([{
         client_id:       finalClientId,
         name:            name.trim(),
@@ -193,6 +198,7 @@ export const AddProjectModal: React.FC<Props> = ({ clients, isOpen, onClose, onS
         start_date:      startDate || hoyISO(),
         status:          'active',
         is_recurring:    isMRR,
+        origen:          origenProyecto,
       }]).select().single();
 
       if (pe) { alert('Error al crear proyecto: ' + pe.message); return; }

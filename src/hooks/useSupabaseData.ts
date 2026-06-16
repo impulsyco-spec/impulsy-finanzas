@@ -32,7 +32,8 @@ export function useSupabaseData() {
         durationMonths: p.duration_months || p.installments,
         status: p.status,
         startDate: p.start_date || p.created_at,
-        isRecurring: Boolean(p.is_recurring)
+        isRecurring: Boolean(p.is_recurring),
+        origen: p.origen || undefined,
       })));
     }
     if (paymentsRes.data) {

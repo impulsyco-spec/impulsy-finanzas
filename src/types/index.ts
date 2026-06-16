@@ -29,6 +29,7 @@ export interface Project {
   startDate: string;
   status: 'active' | 'completed' | 'on-hold' | 'cancelled';
   isRecurring?: boolean;
+  origen?: OrigenCliente;   // de dónde vino ESTE proyecto (puede diferir del cliente: renovación, etc.)
   // Nuevos campos financieros
   tipoAcuerdo?: 'pago_unico' | 'pagos_divididos' | 'retainer' | 'hibrido';
   valorTotalAcuerdo?: number;

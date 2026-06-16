@@ -8,7 +8,7 @@ import { EditProjectModal } from '../../components/EditProjectModal';
 import { ClientesSection } from './Clientes';
 import { supabase } from '../../lib/supabase';
 import { hoyISO } from '../../lib/dates';
-import { MESES_ES } from '../../types';
+import { MESES_ES, ORIGEN_LABELS } from '../../types';
 
 const fmt  = (v: number) => '$' + Math.round(v).toLocaleString('es-CO');
 const fmtK = (v: number) => v >= 1_000_000 ? '$' + (v / 1_000_000).toFixed(1) + 'M' : v >= 1_000 ? '$' + (v / 1_000).toFixed(0) + 'K' : fmt(v);
@@ -213,6 +213,17 @@ export const ProyectosV2: React.FC = () => {
     } finally {
       setDeleting(false);
     }
+  };
+
+  const setOrigenProyecto = async (projectId: string, origen: string) => {
+    const { error } = await supabase.from('projects').update({ origen: origen || null }).eq('id', projectId);
+    if (error) {
+      alert(error.code === '42703'
+        ? 'Falta la columna origen en proyectos: ejecuta supabase-origen-proyectos.sql en Supabase.'
+        : 'Error: ' + error.message);
+      return;
+    }
+    refetch();
   };
 
   const markAsPaid = async (movId: string, amount: number) => {
@@ -467,6 +478,19 @@ export const ProyectosV2: React.FC = () => {
                           </div>
                           <div style={{ fontSize: '0.75rem', color: '#71717a', marginTop: '0.2rem' }}>
                             Duración: <span style={{ color: '#fff' }}>{proj.durationMonths} {proj.durationMonths === 1 ? 'mes' : 'meses'}</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.4rem' }}>
+                            <span style={{ fontSize: '0.75rem', color: '#71717a' }}>Origen:</span>
+                            <select value={proj.origen || ''} onChange={e => setOrigenProyecto(proj.id, e.target.value)}
+                              style={{ background: '#1a1a1a', border: '1px solid #333', color: proj.origen ? ORIGEN_LABELS[proj.origen].color : '#71717a', padding: '0.25rem 0.4rem', borderRadius: '6px', fontSize: '0.72rem', fontFamily: 'inherit', fontWeight: 600, cursor: 'pointer' }}>
+                              <option value="">❔ Sin asignar</option>
+                              <option value="campanas">📣 Campañas</option>
+                              <option value="referido">🤝 Referido</option>
+                              <option value="organico">🌱 Orgánico</option>
+                            </select>
+                          </div>
+                          <div style={{ fontSize: '0.62rem', color: '#3f3f46', marginTop: '0.2rem' }}>
+                            Si es renovación, márcala distinto del origen del cliente para no inflar el ROAS.
                           </div>
                           {vigencia && (
                             <div style={{ marginTop: '0.5rem', padding: '0.35rem 0.6rem', background: `${vigencia.color}15`, borderRadius: '6px', fontSize: '0.75rem', fontWeight: 700, color: vigencia.color }}>
