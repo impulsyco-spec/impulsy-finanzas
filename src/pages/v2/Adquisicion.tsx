@@ -149,25 +149,25 @@ export const Adquisicion: React.FC = () => {
   const sinClasificar = clients.filter(c => !c.origen).length;
   const periodoLabel = PERIODOS.find(p => p.id === periodo)?.label || '';
 
-  // Explicaciones del glosario (estilo "Ver diagnóstico" de Inicio)
+  // Explicaciones didácticas del glosario (estilo "Ver diagnóstico" de Inicio)
   const INSIGHTS: Record<string, string> = {
-    inversion: 'Lo que gastaste en pauta (Meta, Google, TikTok) en el período. Es la semilla que siembras para atraer clientes.',
-    ingresos:  'Todo lo que han pagado —en toda su relación contigo— los clientes que ADQUIRISTE con pauta en este período. La cosecha de esa semilla, aunque paguen meses después.',
-    roas:      'Por cada $1 de pauta, cuántos pesos en ventas regresaron. 4 : 1 = entran $4 por cada $1 invertido. Meta sana de agencia: 3 : 1 o más. Es el rendimiento bruto de tu inversión.',
-    roi:       'El ROAS mira ventas; el ROI mira GANANCIA real: resta lo que costó entregar el servicio y la pauta. Puedes tener buen ROAS y flojo ROI si entregar sale caro.',
-    cac:       'Costo de Adquisición: cuánto te cuesta conseguir UN cliente nuevo por pauta. Gastas $1M y cierras 2 → CAC $500K.',
-    ltv:       'Valor de Vida: lo que un cliente de pauta te deja en TODA su relación (pagos + renovaciones). Histórico, no del período. El cliente que cuesta $500K y deja $5M es oro.',
-    ltvcac:    'La métrica reina: cuánto te devuelve un cliente por cada peso que costó traerlo. Bajo 1 : 1 pierdes; sano 3 : 1+. Si es 10 : 1, escala la pauta sin miedo.',
+    inversion: 'Lo que pusiste en pauta (Meta, Google, TikTok) en el período. Es la semilla: sin sembrar, no hay cosecha. Sale solo de los gastos que marcas como "Ads Paid Media".',
+    ingresos:  'Suma de TODO lo que pagan —ahora y a futuro— los clientes que entraron por pauta en este período. Si captas un cliente y te paga durante 6 meses, esos 6 pagos cuentan aquí, no solo el primero.',
+    roas:      'Cuántas veces recuperaste lo invertido en ads. Ejemplo: gastas $1M en pauta y entran $6M en ventas → ROAS 6x. En agencias, 3x o más es sano; menos de 1x significa que pierdes plata con la pauta.',
+    roi:       'Como el ROAS pero mirando la GANANCIA limpia: le descuenta lo que costó entregar el servicio (freelancers, fulfillment) y la pauta. Un ROAS alto con ROI bajo = vendes mucho pero te queda poco porque entregar sale caro.',
+    cac:       'Costo de Adquisición de Cliente: divides lo gastado en ads entre los clientes nuevos que entraron. $1M en ads y 2 clientes nuevos → cada uno te costó $500K. Mientras más bajo, mejor.',
+    ltv:       'Valor de Vida: cuánto te deja un cliente de pauta sumando TODOS sus pagos y renovaciones, no solo el primero. El secreto del negocio: un cliente que cuesta $500K (CAC) pero deja $5M (LTV) es oro puro.',
+    ltvcac:    'Compara lo que un cliente DEJA contra lo que COSTÓ traerlo. 3 : 1 o más = sano (cada peso de ads vuelve 3+). Bajo 1 : 1 pierdes. Nota: con el filtro "Todo" da igual al ROAS porque ambos miran toda la historia; en un mes suelto se separan.',
   };
 
   if (loadLedger || loadData) return <div style={{ padding: '2rem', color: '#a1a1aa' }}>Calculando adquisición...</div>;
 
   const kpis = [
-    { id: 'inversion', label: 'Inversión en Ads', value: fmtK(inversionAds), color: '#a855f7', icon: <Megaphone size={13} />, hint: `${movsAds.length} pago(s) "Ads Paid Media"` },
-    { id: 'ingresos',  label: 'Ingresos de la cohorte', value: fmtK(ingresosCohorte), color: '#10b981', icon: <TrendingUp size={13} />, hint: 'todo lo que pagan los clientes 📣 captados en el período' },
-    { id: 'roas',      label: 'ROAS', value: fmtRatio(roas), color: roas == null ? '#71717a' : roas >= 3 ? '#10b981' : roas >= 1 ? '#f59e0b' : '#ef4444', icon: <Crosshair size={13} />, hint: 'retorno por cada $1 de pauta · meta 3 : 1+' },
-    { id: 'roi',       label: 'ROI Campañas', value: roi != null ? roi.toFixed(0) + '%' : '—', color: roi == null ? '#71717a' : roi >= 100 ? '#10b981' : roi >= 0 ? '#f59e0b' : '#ef4444', icon: null, hint: 'ganancia real sobre la pauta' },
-    { id: 'cac',       label: 'CAC', value: cac != null ? fmtK(cac) : '—', color: '#06b6d4', icon: <Users size={13} />, hint: cac != null ? `${clientesNuevos} cliente(s) nuevos de 📣` : 'sin clientes nuevos de 📣 en el período' },
+    { id: 'inversion', label: 'Inversión en Ads', value: fmtK(inversionAds), color: '#a855f7', icon: <Megaphone size={13} />, hint: `${movsAds.length} pago(s) de pauta en el período` },
+    { id: 'ingresos',  label: 'Ingresos de la cohorte', value: fmtK(ingresosCohorte), color: '#10b981', icon: <TrendingUp size={13} />, hint: 'lo que pagan —de por vida— los clientes captados ahora' },
+    { id: 'roas',      label: 'ROAS', value: roas != null ? roas.toFixed(1) + 'x' : '—', color: roas == null ? '#71717a' : roas >= 3 ? '#10b981' : roas >= 1 ? '#f59e0b' : '#ef4444', icon: <Crosshair size={13} />, hint: roas != null ? `Por cada $1 en ads, volvieron $${roas.toFixed(1)} en ventas` : 'sin pauta en el período' },
+    { id: 'roi',       label: 'ROI Campañas', value: roi != null ? roi.toFixed(0) + '%' : '—', color: roi == null ? '#71717a' : roi >= 100 ? '#10b981' : roi >= 0 ? '#f59e0b' : '#ef4444', icon: null, hint: roi != null ? `Por cada $1 en ads, ganaste $${(roi / 100).toFixed(1)} limpios` : 'sin pauta en el período' },
+    { id: 'cac',       label: 'CAC', value: cac != null ? fmtK(cac) : '—', color: '#06b6d4', icon: <Users size={13} />, hint: cac != null ? `Conseguir 1 cliente te cuesta ${fmtK(cac)}` : 'sin clientes nuevos de 📣 en el período' },
   ];
 
   return (
@@ -235,19 +235,20 @@ export const Adquisicion: React.FC = () => {
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.62rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700 }}><Repeat size={11} /> LTV promedio</div>
             <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#14b8a6' }}>{ltv != null ? fmtK(ltv) : '—'}</div>
-            <div style={{ fontSize: '0.62rem', color: '#52525b' }}>{nClientesLtv} cliente(s) 📣 en su vida completa</div>
+            <div style={{ fontSize: '0.62rem', color: '#52525b' }}>{ltv != null ? `cada cliente 📣 deja esto en toda su relación` : 'aún sin clientes de campañas'}</div>
             {showInsights && <div style={{ marginTop: '0.4rem', fontSize: '0.66rem', color: '#14b8a6', lineHeight: 1.5 }}>{INSIGHTS.ltv}</div>}
           </div>
           <div>
             <div style={{ fontSize: '0.62rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700 }}>CAC (período)</div>
             <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#06b6d4' }}>{cac != null ? fmtK(cac) : '—'}</div>
-            <div style={{ fontSize: '0.62rem', color: '#52525b' }}>costo de traer un cliente</div>
+            <div style={{ fontSize: '0.62rem', color: '#52525b' }}>lo que pagaste en ads por cada cliente nuevo</div>
+            {showInsights && <div style={{ marginTop: '0.4rem', fontSize: '0.66rem', color: '#06b6d4', lineHeight: 1.5 }}>{INSIGHTS.cac}</div>}
           </div>
           <div>
             <div style={{ fontSize: '0.62rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700 }}>Relación LTV : CAC</div>
             <div style={{ fontSize: '1.5rem', fontWeight: 800, color: ltvCac == null ? '#71717a' : ltvCac >= 3 ? '#10b981' : ltvCac >= 1 ? '#f59e0b' : '#ef4444' }}>{fmtRatio(ltvCac)}</div>
             <div style={{ fontSize: '0.62rem', color: ltvCac == null ? '#52525b' : ltvCac >= 3 ? '#10b981' : '#f59e0b' }}>
-              {ltvCac == null ? 'falta CAC del período' : ltvCac >= 3 ? 'saludable — puedes escalar' : ltvCac >= 1 ? 'aceptable, vigila' : 'pierdes en cada cliente'}
+              {ltvCac == null ? 'falta CAC del período' : ltvCac >= 3 ? `vuelve $${ltvCac.toFixed(1)} por cada $1 — escala` : ltvCac >= 1 ? `vuelve $${ltvCac.toFixed(1)} por cada $1 — vigila` : 'pierdes en cada cliente'}
             </div>
             {showInsights && <div style={{ marginTop: '0.4rem', fontSize: '0.66rem', color: '#14b8a6', lineHeight: 1.5 }}>{INSIGHTS.ltvcac}</div>}
           </div>
