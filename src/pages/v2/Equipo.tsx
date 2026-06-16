@@ -215,7 +215,7 @@ export const Equipo: React.FC = () => {
       </div>
 
       {/* KPIs */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '0.875rem' }}>
+      <div className="resp-grid-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '0.875rem' }}>
         {[
           { label: 'Miembros activos',    value: String(members.filter(m => m.activo).length), color: '#a855f7' },
           { label: `Pagado ${MESES_ES[new Date(filterMonth + '-15').getMonth()]} ${new Date(filterMonth + '-15').getFullYear()}`, value: fmtK(totalEquipoMes), color: '#ef4444' },
@@ -515,7 +515,7 @@ export const Equipo: React.FC = () => {
           </div>
 
           {/* KPIs del rango */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '0.875rem' }}>
+          <div className="resp-grid-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '0.875rem' }}>
             {[
               { label: metMember ? `Total ${members.find(m=>m.id===metMember)?.nombre || ''}` : 'Total equipo en rango', value: fmtK(totalEnRango), color: '#ef4444' },
               { label: 'Promedio mensual', value: fmtK(promedioMensual), color: '#f59e0b' },

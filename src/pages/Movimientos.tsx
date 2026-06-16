@@ -177,7 +177,7 @@ export const Movimientos: React.FC = () => {
       </header>
 
       {/* Resumen */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '1rem' }}>
+      <div className="resp-grid-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '1rem' }}>
         {[
           { label: 'Ingresos confirmados', value: fmt(totIng),          color: '#10b981' },
           { label: 'Egresos confirmados',  value: fmt(totEgr),          color: '#ef4444' },

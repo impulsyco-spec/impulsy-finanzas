@@ -165,7 +165,7 @@ a {
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.5px;
   margin-top: 0.5rem;
-  word-break: break-all;
+  white-space: nowrap;        /* nunca partir un número/porcentaje a la mitad */
 }
 
 .stat-label {
@@ -380,8 +380,10 @@ tr:hover td {
   .desktop-only { display: none !important; }
   .desktop-hide { display: block !important; }
 
-  /* Stat values smaller */
-  .stat-value { font-size: 1.4rem; }
+  /* Stat values: más pequeños y SIEMPRE en una línea (gana a estilos inline) */
+  .stat-value { font-size: 1.05rem !important; line-height: 1.2 !important; white-space: nowrap !important; }
+  .stat-card  { padding: 0.875rem 0.6rem !important; min-height: auto !important; }
+  .stat-label { font-size: 0.58rem !important; letter-spacing: 0.3px !important; }
 
   /* Tables scroll horizontally */
   .table-wrapper {

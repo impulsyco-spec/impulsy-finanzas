@@ -383,7 +383,7 @@ export const Resumen: React.FC = () => {
           </div>
 
           {/* KPIs con semáforo */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: '0.875rem' }}>
+          <div className="resp-grid-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: '0.875rem' }}>
             <KpiCard
               label="Margen operativo"
               value={periodIng > 0 ? periodMargenPct.toFixed(1)+'%' : '—'}
@@ -623,8 +623,8 @@ export const Resumen: React.FC = () => {
             <BarChart data={meses} maxVal={maxVal} />
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 260px', gap: '1.5rem', alignItems: 'start' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '0.625rem' }}>
+          <div className="resp-grid-panel" style={{ display: 'grid', gridTemplateColumns: '1fr 260px', gap: '1.5rem', alignItems: 'start' }}>
+            <div className="resp-grid-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '0.625rem' }}>
               {meses.map(m => (
                 <div key={m.ms} onClick={() => m.active && navigate(`/finanzas?tab=movimientos&mes=${m.ms}`)} className="card"
                   style={{ padding: '0.875rem 1rem', cursor: m.active?'pointer':'default', opacity: m.active?1:0.35, minHeight: 'auto', borderTop: m.active?`2px solid ${m.bal>=0?'#10b98155':'#ef444433'}`:'2px solid #111' }}>
