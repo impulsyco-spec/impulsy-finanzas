@@ -83,6 +83,8 @@ export const Movimientos: React.FC = () => {
     if (!confirm('¿Eliminar este movimiento?')) return;
     const mov = movements.find(m => m.id === id);
     await supabase.from('ledger_movements').delete().eq('id', id);
+    // Si era un salario del fundador, borrar también su espejo en el mundo Personal
+    await supabase.from('personal_movements').delete().eq('fuente', `salario:${id}`);
     // Si estaba vinculado a un pago, resetear el pago a pendiente
     if (mov?.paymentId) {
       await supabase.from('payments').update({ status: 'pending', actual_amount: null, ledger_movement_id: null }).eq('id', mov.paymentId);
@@ -141,6 +143,8 @@ export const Movimientos: React.FC = () => {
         }
       }
       await supabase.from('ledger_movements').delete().in('id', ids);
+      // Borrar espejos de salario en el mundo Personal para los ids eliminados
+      await supabase.from('personal_movements').delete().in('fuente', ids.map(i => `salario:${i}`));
       setSelected(new Set());
       refetch();
     } finally { setBulkSaving(false); }

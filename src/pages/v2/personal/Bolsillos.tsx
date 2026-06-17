@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Trash2, Lock, X } from 'lucide-react';
+import { Plus, Trash2, Lock, X, ArrowLeftRight } from 'lucide-react';
 import { usePersonal, PersonalPocket } from '../../../hooks/usePersonal';
 import { hoyISO } from '../../../lib/dates';
 import { GOLD, fmt, fmtK, inp, lbl, fmtInput, PersonalHeader, Setup2Banner } from './comunes';
@@ -10,6 +10,7 @@ export const PersonalBolsillos: React.FC = () => {
   const { movements, pockets, loading, setupError, setup2Error, refetch, addPocket, updatePocket, removePocket, moverPocket } = usePersonal();
   const [showAdd, setShowAdd] = useState(false);
   const [moviendo, setMoviendo] = useState<{ pocket: PersonalPocket; tipo: 'aporte' | 'retiro' } | null>(null);
+  const [transfiriendo, setTransfiriendo] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const conf = movements.filter(m => m.estado === 'confirmado');
@@ -25,9 +26,16 @@ export const PersonalBolsillos: React.FC = () => {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', paddingBottom: '3rem' }}>
       <PersonalHeader titulo="🎯 Bolsillos y Metas" sub="Lo apartado deja de verse disponible — así se cumple una meta."
         extra={!setup2Error ? (
-          <button className="btn btn-primary" onClick={() => setShowAdd(true)} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-            <Plus size={16} /> Nueva Meta
-          </button>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            {activos.length >= 2 && (
+              <button className="btn btn-outline" onClick={() => setTransfiriendo(true)} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <ArrowLeftRight size={16} /> Transferir
+              </button>
+            )}
+            <button className="btn btn-primary" onClick={() => setShowAdd(true)} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <Plus size={16} /> Nueva Meta
+            </button>
+          </div>
         ) : undefined} />
 
       {setup2Error ? <Setup2Banner onRetry={refetch} /> : (
@@ -140,6 +148,78 @@ export const PersonalBolsillos: React.FC = () => {
           }}
         />
       )}
+
+      {/* Modal transferir entre bolsillos */}
+      {transfiriendo && (
+        <TransferModal
+          pockets={activos}
+          onClose={() => setTransfiriendo(false)}
+          onTransfer={async (origenId, destinoId, valor) => {
+            const o = pockets.find(p => p.id === origenId);
+            const d = pockets.find(p => p.id === destinoId);
+            await moverPocket(origenId, -valor, hoyISO(), `Transferencia → ${d?.nombre ?? ''}`);
+            await moverPocket(destinoId, valor, hoyISO(), `Transferencia ← ${o?.nombre ?? ''}`);
+            setTransfiriendo(false);
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+const TransferModal: React.FC<{
+  pockets: PersonalPocket[];
+  onClose: () => void;
+  onTransfer: (origenId: string, destinoId: string, valor: number) => Promise<void>;
+}> = ({ pockets, onClose, onTransfer }) => {
+  const conSaldo = pockets.filter(p => p.saldo > 0);
+  const [origenId, setOrigenId] = useState(conSaldo[0]?.id ?? '');
+  const [destinoId, setDestinoId] = useState(pockets.find(p => p.id !== conSaldo[0]?.id)?.id ?? '');
+  const [valor, setValor] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const origen = pockets.find(p => p.id === origenId);
+  const num = Number(valor.replace(/\./g, '')) || 0;
+  const excede = origen ? num > origen.saldo : false;
+  const mismoBolsillo = origenId === destinoId;
+  const valido = num > 0 && !excede && !mismoBolsillo && origenId && destinoId;
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: '1rem' }}>
+      <div className="card" style={{ width: '400px', maxWidth: '100%', border: `1px solid ${GOLD}44` }}>
+        <h3 style={{ color: '#fff', fontWeight: 800, marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <ArrowLeftRight size={18} style={{ color: GOLD }} /> Transferir entre bolsillos
+        </h3>
+
+        <label style={lbl}>Desde</label>
+        <select style={inp} value={origenId} onChange={e => setOrigenId(e.target.value)}>
+          {pockets.map(p => <option key={p.id} value={p.id}>{p.emoji} {p.nombre} — {fmt(p.saldo)}</option>)}
+        </select>
+
+        <label style={{ ...lbl, marginTop: '0.75rem' }}>Hacia</label>
+        <select style={inp} value={destinoId} onChange={e => setDestinoId(e.target.value)}>
+          {pockets.map(p => <option key={p.id} value={p.id}>{p.emoji} {p.nombre} — {fmt(p.saldo)}</option>)}
+        </select>
+
+        <label style={{ ...lbl, marginTop: '0.75rem' }}>Valor COP</label>
+        <input style={{ ...inp, fontSize: '1.1rem', fontWeight: 700, color: GOLD }} inputMode="numeric" autoFocus
+          value={valor} onChange={e => setValor(fmtInput(e.target.value))} placeholder="0" />
+        {mismoBolsillo && <div style={{ fontSize: '0.7rem', color: '#ef4444', marginTop: '0.4rem' }}>Elige dos bolsillos distintos.</div>}
+        {excede && <div style={{ fontSize: '0.7rem', color: '#ef4444', marginTop: '0.4rem' }}>No hay tanto en el bolsillo de origen.</div>}
+
+        <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'flex-end', marginTop: '1.25rem' }}>
+          <button onClick={onClose} className="btn btn-outline">Cancelar</button>
+          <button className="btn btn-primary" disabled={saving || !valido}
+            onClick={async () => {
+              setSaving(true);
+              try { await onTransfer(origenId, destinoId, num); }
+              catch (err: any) { alert('Error: ' + err.message); }
+              finally { setSaving(false); }
+            }}>
+            {saving ? '...' : 'Transferir'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 };

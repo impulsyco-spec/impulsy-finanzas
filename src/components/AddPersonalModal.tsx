@@ -6,15 +6,16 @@ import { hoyISO } from '../lib/dates';
 
 interface Props {
   onClose: () => void;
-  onSave: (m: { fecha: string; naturaleza: 'ingreso' | 'egreso'; descripcion: string; valor: number; categoria?: string; estado: 'confirmado' | 'esperado'; notas?: string }) => Promise<void>;
+  onSave: (m: { fecha: string; naturaleza: 'ingreso' | 'egreso'; descripcion: string; valor: number; categoria?: string; estado: 'confirmado' | 'esperado'; notas?: string; bolsilloId?: string }) => Promise<void>;
   editing?: PersonalMovement | null;
+  pockets?: { id: string; nombre: string; emoji: string }[];
 }
 
-export const AddPersonalModal: React.FC<Props> = ({ onClose, onSave, editing }) => {
+export const AddPersonalModal: React.FC<Props> = ({ onClose, onSave, editing, pockets = [] }) => {
   const [f, setF] = useState({
     naturaleza: 'egreso' as 'ingreso' | 'egreso',
     fecha: hoyISO(), descripcion: '', valor: '',
-    categoria: 'Ocio', estado: 'confirmado' as 'confirmado' | 'esperado', notas: '',
+    categoria: 'Ocio', estado: 'confirmado' as 'confirmado' | 'esperado', notas: '', bolsilloId: '',
   });
   const [saving, setSaving] = useState(false);
 
@@ -78,6 +79,18 @@ export const AddPersonalModal: React.FC<Props> = ({ onClose, onSave, editing }) 
             </div>
           </div>
 
+          {!editing && pockets.length > 0 && (
+            <div><label style={lbl}>{f.naturaleza === 'egreso' ? '¿De qué bolsillo sale?' : '¿A qué bolsillo va?'} (opcional)</label>
+              <select style={inp} value={f.bolsilloId} onChange={e => setF(x => ({ ...x, bolsilloId: e.target.value }))}>
+                <option value="">— Cuenta general (sin bolsillo) —</option>
+                {pockets.map(p => <option key={p.id} value={p.id}>{p.emoji} {p.nombre}</option>)}
+              </select>
+              <div style={{ fontSize: '0.64rem', color: '#52525b', marginTop: '0.25rem' }}>
+                {f.naturaleza === 'egreso' ? 'El gasto se descuenta de ese bolsillo.' : 'El ingreso se suma a ese bolsillo.'}
+              </div>
+            </div>
+          )}
+
           <div><label style={lbl}>Notas (opcional)</label>
             <input style={inp} value={f.notas} onChange={e => setF(x => ({ ...x, notas: e.target.value }))} placeholder="Observaciones" />
           </div>
@@ -91,7 +104,7 @@ export const AddPersonalModal: React.FC<Props> = ({ onClose, onSave, editing }) 
               if (!f.fecha || !f.descripcion.trim() || valor <= 0) { alert('Completa fecha, descripción y valor.'); return; }
               setSaving(true);
               try {
-                await onSave({ fecha: f.fecha, naturaleza: f.naturaleza, descripcion: f.descripcion.trim(), valor, categoria: f.categoria, estado: f.estado, notas: f.notas.trim() || undefined });
+                await onSave({ fecha: f.fecha, naturaleza: f.naturaleza, descripcion: f.descripcion.trim(), valor, categoria: f.categoria, estado: f.estado, notas: f.notas.trim() || undefined, bolsilloId: editing ? undefined : (f.bolsilloId || undefined) });
               } catch (err: any) { alert('Error: ' + err.message); }
               finally { setSaving(false); }
             }}>

@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { Home, FolderKanban, TrendingUp, BarChart2, HelpCircle, LogOut, Users, UserCircle, Megaphone } from 'lucide-react';
+import { Home, FolderKanban, TrendingUp, BarChart2, HelpCircle, LogOut, Users, UserCircle, Megaphone, Wallet } from 'lucide-react';
 
 interface Props { onLogout?: () => void; }
 
@@ -30,6 +30,7 @@ export const SidebarV2: React.FC<Props> = ({ onLogout }) => {
         {link('/proyectos', <FolderKanban size={18} />, 'Proyectos y Clientes', 'Contratos, cobros y perfiles')}
         {link('/adquisicion', <Megaphone  size={18} />, 'Adquisición', 'ROAS, ROI y CAC')}
         {link('/finanzas',  <TrendingUp   size={18} />, 'Finanzas',  'Movimientos y proyección')}
+        {link('/nomina',    <Wallet       size={18} />, 'Nómina',    'Tu base y bono')}
         {link('/equipo',    <Users        size={18} />, 'Equipo',    'Freelancers y proveedores')}
         {link('/resumen',   <BarChart2    size={18} />, 'Resumen',   'Año y alertas')}
 

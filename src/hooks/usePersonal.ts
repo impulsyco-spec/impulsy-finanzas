@@ -5,10 +5,18 @@ import { LedgerMovement } from '../types';
 import { esSalarioFundador } from '../lib/founderRules';
 
 // ── Configuración del modo Personal ─────────────────────────────
+// Calibrada con Agustín (16 jun 2026): priorizar inversión/deuda, ocio medido.
 export const PERSONAL_CONFIG = {
   cuenta: 'Bancolombia',
-  metaAhorroPct: 0.10,        // 10% del ingreso del mes como meta inicial
+  invPct: 0.15,               // (legado) 15% del ingreso — reemplazado por la cascada inteligente
+  metaAhorroPct: 0.15,        // meta de ahorro del mes
+  ocioMensual: 650_000,       // presupuesto de ocio/fiesta del mes (referencia)
   mesesFondoEmergencia: 3,    // fondo de emergencia = 3 meses de gasto promedio
+  bolsilloLibertad: 'Libertad', // nombre del bolsillo que mata deuda
+  // ── Cascada inteligente de distribución (calibrada con Agustín, 16 jun 2026) ──
+  supervivenciaQuincena: 400_000, // mínimo intocable para comer/moverse por quincena
+  pctLibertadExcedente: 0.50,     // del excedente: 50% acelera deuda (Libertad), 50% fiesta
+  fraccionCuotaDeudaPorQuincena: 0.5, // cada quincena reserva la mitad de las cuotas del mes
 };
 
 export const CATS_PERSONAL_EGRESO = [
@@ -49,6 +57,14 @@ export interface PersonalPocket {
   orden: number;
   activo: boolean;
   saldo: number; // calculado: suma de sus aportes − retiros
+}
+
+export interface PersonalPocketMove {
+  id: string;
+  pocketId: string;
+  valor: number;   // positivo = aporte, negativo = retiro
+  fecha: string;
+  nota?: string;
 }
 
 export interface PersonalDebt {
@@ -98,10 +114,46 @@ async function crearProyeccionesPersonales(id: string, item: Omit<PersonalRecurr
   if (error) console.error('crearProyeccionesPersonales:', error.message);
 }
 
+// Proyecta las cuotas FALTANTES de una deuda como movimientos 'esperado' (categoría
+// Deudas), un mes por cuota desde su próximo pago. Idempotente: borra las esperadas
+// previas y regenera SIEMPRE desde el saldo actual → si abonas de más, las cuotas
+// futuras se reducen/recortan solas. No toca las ya pagadas (confirmadas).
+const HORIZONTE_CUOTAS = 18; // hasta 18 meses adelante (suficiente para ver y planear)
+async function reproyectarCuotasDeuda(debt: PersonalDebt) {
+  await supabase.from('personal_movements').delete()
+    .like('fuente', `deuda:${debt.id}:%`).eq('estado', 'esperado');
+  if (!debt.activa || debt.saldoActual <= 0 || debt.cuotaMinima <= 0 || !debt.fechaProximoPago) return;
+
+  const { data: pagadas } = await supabase.from('personal_movements')
+    .select('fuente').like('fuente', `deuda:${debt.id}:%`).eq('estado', 'confirmado');
+  const mesesPagados = new Set((pagadas || []).map((p: any) => p.fuente as string));
+
+  const base = new Date(debt.fechaProximoPago + 'T12:00:00');
+  const dia = base.getDate();
+  let saldo = debt.saldoActual;
+  const rows: Record<string, unknown>[] = [];
+  for (let i = 0; i < HORIZONTE_CUOTAS && saldo > 0; i++) {
+    const ultimo = new Date(base.getFullYear(), base.getMonth() + i + 1, 0).getDate();
+    const d = new Date(base.getFullYear(), base.getMonth() + i, Math.min(dia, ultimo));
+    const fecha = fechaISO(d);
+    const fuente = `deuda:${debt.id}:${fecha.slice(0, 7)}`;
+    const valor = Math.min(debt.cuotaMinima, saldo);
+    if (!mesesPagados.has(fuente)) {
+      rows.push({ fecha, naturaleza: 'egreso', descripcion: `Cuota ${debt.acreedor}`, valor, categoria: 'Deudas', estado: 'esperado', fuente });
+    }
+    saldo -= valor;
+  }
+  if (rows.length) {
+    const { error } = await supabase.from('personal_movements').insert(rows);
+    if (error) console.error('reproyectarCuotasDeuda:', error.message);
+  }
+}
+
 export function usePersonal() {
   const [movements, setMovements] = useState<PersonalMovement[]>([]);
   const [recurring, setRecurring] = useState<PersonalRecurring[]>([]);
   const [pockets, setPockets]     = useState<PersonalPocket[]>([]);
+  const [pocketMoves, setPocketMoves] = useState<PersonalPocketMove[]>([]);
   const [debts, setDebts]         = useState<PersonalDebt[]>([]);
   const [budgets, setBudgets]     = useState<PersonalBudget[]>([]);
   const [loading, setLoading]     = useState(true);
@@ -144,6 +196,9 @@ export function usePersonal() {
     (pmovRes.data || []).forEach((pm: any) => {
       saldoPorPocket[pm.pocket_id] = (saldoPorPocket[pm.pocket_id] || 0) + Number(pm.valor);
     });
+    setPocketMoves((pmovRes.data || []).map((pm: any) => ({
+      id: pm.id, pocketId: pm.pocket_id, valor: Number(pm.valor), fecha: pm.fecha, nota: pm.nota || undefined,
+    })));
     setPockets((pockRes.data || []).map((p: any) => ({
       id: p.id, nombre: p.nombre, emoji: p.emoji || '🎯', metaValor: Number(p.meta_valor),
       fechaObjetivo: p.fecha_objetivo || undefined, esFondo: p.es_fondo, orden: p.orden,
@@ -163,17 +218,27 @@ export function usePersonal() {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
-  // ── Puente: cada salario del fundador pagado en Impulsy aparece como
-  // ingreso en Bancolombia. Idempotente por índice único sobre `fuente`.
+  // ── Puente bidireccional del salario ────────────────────────────
+  // Cada salario del fundador CONFIRMADO en Impulsy aparece como ingreso en
+  // Bancolombia. Reconcilia en ambos sentidos: crea los espejos que faltan y
+  // BORRA los huérfanos (salarios que se borraron o se volvieron 'esperado' en
+  // la empresa). Así el mundo Personal es siempre un reflejo fiel del ledger.
   const sincronizarSalarios = useCallback(async (ledgerMovements: LedgerMovement[]) => {
+    // Salvaguarda: si el ledger viene vacío (probable error de carga), NO reconciliar
+    // para no borrar espejos válidos por accidente.
+    if (ledgerMovements.length === 0) return false;
     const salarios = ledgerMovements.filter(m => esSalarioFundador(m) && m.estado === 'confirmado');
-    if (salarios.length === 0) return false;
-    const { data: existentes, error } = await supabase
-      .from('personal_movements').select('fuente').like('fuente', 'salario:%');
+    const fuentesValidas = new Set(salarios.map(m => `salario:${m.id}`));
+
+    const { data: espejosData, error } = await supabase
+      .from('personal_movements').select('id,fuente').like('fuente', 'salario:%');
     if (error) return false;
-    const ya = new Set((existentes || []).map(e => e.fuente));
+    const espejos = espejosData || [];
+    const yaEspejadas = new Set(espejos.map(e => e.fuente));
+
+    // 1) Crear los espejos que faltan
     const nuevos = salarios
-      .filter(m => !ya.has(`salario:${m.id}`))
+      .filter(m => !yaEspejadas.has(`salario:${m.id}`))
       .map(m => ({
         fecha: m.fecha,
         naturaleza: 'ingreso',
@@ -183,20 +248,46 @@ export function usePersonal() {
         estado: 'confirmado',
         fuente: `salario:${m.id}`,
       }));
-    if (nuevos.length === 0) return false;
-    // upsert ignorando duplicados por si dos pestañas sincronizan a la vez
-    await supabase.from('personal_movements').upsert(nuevos, { onConflict: 'fuente', ignoreDuplicates: true });
-    await fetchAll();
-    return true;
+
+    // 2) Borrar huérfanos: espejos cuyo salario ya no existe (o se desconfirmó)
+    const huerfanos = espejos.filter(e => !fuentesValidas.has(e.fuente)).map(e => e.id);
+
+    let cambios = false;
+    if (nuevos.length > 0) {
+      const { error: insErr } = await supabase.from('personal_movements').insert(nuevos);
+      if (!insErr) cambios = true;
+    }
+    if (huerfanos.length > 0) {
+      const { error: delErr } = await supabase.from('personal_movements').delete().in('id', huerfanos);
+      if (!delErr) cambios = true;
+    }
+    if (cambios) await fetchAll();
+    return cambios;
   }, [fetchAll]);
 
-  const addMovement = async (m: Omit<PersonalMovement, 'id' | 'fuente'>) => {
+  // Registra un movimiento. Si se indica `bolsilloId`, además mueve ese bolsillo:
+  // gasto → resta; ingreso → suma. Así cada peso entra/sale de su sobre.
+  const addMovement = async (
+    mIn: Omit<PersonalMovement, 'id' | 'fuente'> & { bolsilloId?: string },
+    bolsilloIdArg?: string,
+  ) => {
+    const { bolsilloId: bidInline, ...m } = mIn;
+    const bid = bolsilloIdArg ?? bidInline;
     const { error } = await supabase.from('personal_movements').insert({ ...m, fuente: 'manual' });
     if (error) throw error;
+    if (bid) {
+      const signo = m.naturaleza === 'ingreso' ? 1 : -1;
+      const { error: pErr } = await supabase.from('personal_pocket_moves').insert({
+        pocket_id: bid, valor: signo * m.valor, fecha: m.fecha,
+        nota: `${m.naturaleza === 'ingreso' ? 'Ingreso' : 'Gasto'}: ${m.descripcion}`,
+      });
+      if (pErr) console.error('movimiento→bolsillo:', pErr.message);
+    }
     await fetchAll();
   };
 
-  const updateMovement = async (id: string, cambios: Partial<PersonalMovement>) => {
+  const updateMovement = async (id: string, cambiosIn: Partial<PersonalMovement> & { bolsilloId?: string }) => {
+    const { bolsilloId: _omit, ...cambios } = cambiosIn; // bolsilloId no es columna
     const { error } = await supabase.from('personal_movements')
       .update({ ...cambios, updated_at: new Date().toISOString() }).eq('id', id);
     if (error) throw error;
@@ -271,13 +362,14 @@ export function usePersonal() {
 
   // ── Deudas personales ───────────────────────────────────────
   const addDebt = async (d: Omit<PersonalDebt, 'id' | 'activa'>) => {
-    const { error } = await supabase.from('personal_debts').insert({
+    const { data, error } = await supabase.from('personal_debts').insert({
       acreedor: d.acreedor, tipo: d.tipo, monto_original: d.montoOriginal,
       saldo_actual: d.saldoActual, cuota_minima: d.cuotaMinima,
       tasa_mensual: d.tasaMensual ?? null, fecha_proximo_pago: d.fechaProximoPago || null,
       notas: d.notas || null,
-    });
+    }).select().single();
     if (error) throw error;
+    if (data) await reproyectarCuotasDeuda({ ...d, id: data.id, activa: true });
     await fetchAll();
   };
 
@@ -290,6 +382,15 @@ export function usePersonal() {
     if (c.activa !== undefined) patch.activa = c.activa;
     const { error } = await supabase.from('personal_debts').update(patch).eq('id', id);
     if (error) throw error;
+    // Reproyecta las cuotas con el estado fresco de la deuda
+    const { data } = await supabase.from('personal_debts').select('*').eq('id', id).single();
+    if (data) await reproyectarCuotasDeuda({
+      id: data.id, acreedor: data.acreedor, tipo: data.tipo,
+      montoOriginal: Number(data.monto_original), saldoActual: Number(data.saldo_actual),
+      cuotaMinima: Number(data.cuota_minima),
+      tasaMensual: data.tasa_mensual != null ? Number(data.tasa_mensual) : undefined,
+      fechaProximoPago: data.fecha_proximo_pago || undefined, activa: data.activa, notas: data.notas || undefined,
+    });
     await fetchAll();
   };
 
@@ -299,19 +400,45 @@ export function usePersonal() {
     await fetchAll();
   };
 
-  // Pagar cuota: registra el gasto en movimientos (todo conectado) y baja el saldo de la deuda
+  // Pagar (cuota o abono extra): registra el gasto, baja el saldo y REPROYECTA las
+  // cuotas futuras desde el nuevo saldo. Si abonas de más, las próximas se recortan solas.
   const pagarDeuda = async (debt: PersonalDebt, valor: number, fecha: string) => {
     const { error } = await supabase.from('personal_movements').insert({
       fecha, naturaleza: 'egreso', descripcion: `Pago ${debt.acreedor}`,
       valor, categoria: 'Deudas', estado: 'confirmado', fuente: 'manual',
     });
     if (error) throw error;
+    const nuevoSaldo = Math.max(0, debt.saldoActual - valor);
+    // Avanza el próximo pago un mes (consumiste la cuota de este ciclo)
+    let nuevaFecha = debt.fechaProximoPago;
+    if (debt.fechaProximoPago) {
+      const f = new Date(debt.fechaProximoPago + 'T12:00:00');
+      f.setMonth(f.getMonth() + 1);
+      nuevaFecha = fechaISO(f);
+    }
     await supabase.from('personal_debts').update({
-      saldo_actual: Math.max(0, debt.saldoActual - valor),
+      saldo_actual: nuevoSaldo, fecha_proximo_pago: nuevaFecha || null,
       updated_at: new Date().toISOString(),
     }).eq('id', debt.id);
+    await reproyectarCuotasDeuda({ ...debt, saldoActual: nuevoSaldo, fechaProximoPago: nuevaFecha });
     await fetchAll();
   };
+
+  // Regenera la proyección de TODAS las deudas activas (idempotente). Lee fresco
+  // para no depender del estado (que puede estar desfasado tras una mutación).
+  const reproyectarDeudas = useCallback(async () => {
+    const { data } = await supabase.from('personal_debts').select('*').eq('activa', true);
+    for (const d of (data || [])) {
+      await reproyectarCuotasDeuda({
+        id: d.id, acreedor: d.acreedor, tipo: d.tipo,
+        montoOriginal: Number(d.monto_original), saldoActual: Number(d.saldo_actual),
+        cuotaMinima: Number(d.cuota_minima),
+        tasaMensual: d.tasa_mensual != null ? Number(d.tasa_mensual) : undefined,
+        fechaProximoPago: d.fecha_proximo_pago || undefined, activa: d.activa, notas: d.notas || undefined,
+      });
+    }
+    await fetchAll();
+  }, [fetchAll]);
 
   // ── Presupuestos por categoría ──────────────────────────────
   const setBudget = async (categoria: string, topeMensual: number) => {
@@ -330,13 +457,13 @@ export function usePersonal() {
   };
 
   return {
-    movements, recurring, pockets, debts, budgets,
+    movements, recurring, pockets, pocketMoves, debts, budgets,
     loading, setupError, setup2Error,
     refetch: fetchAll, sincronizarSalarios,
     addMovement, updateMovement, removeMovement,
     addRecurring, toggleRecurring, removeRecurring,
     addPocket, updatePocket, removePocket, moverPocket,
-    addDebt, updateDebt, removeDebt, pagarDeuda,
+    addDebt, updateDebt, removeDebt, pagarDeuda, reproyectarDeudas,
     setBudget, removeBudget,
   };
 }

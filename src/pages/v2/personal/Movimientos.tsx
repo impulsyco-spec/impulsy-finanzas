@@ -3,10 +3,11 @@ import { Plus, Trash2, Pencil } from 'lucide-react';
 import { usePersonal, CATS_PERSONAL_EGRESO, CATS_PERSONAL_INGRESO, PersonalMovement } from '../../../hooks/usePersonal';
 import { hoyISO } from '../../../lib/dates';
 import { AddPersonalModal } from '../../../components/AddPersonalModal';
-import { GOLD, fmt, fmtK, fmtFecha, inp, PersonalHeader } from './comunes';
+import { GOLD, fmt, fmtFecha, inp, PersonalHeader } from './comunes';
 
 export const PersonalMovimientos: React.FC = () => {
-  const { movements, loading, setupError, addMovement, updateMovement, removeMovement } = usePersonal();
+  const { movements, pockets, loading, setupError, addMovement, updateMovement, removeMovement } = usePersonal();
+  const bolsillosActivos = pockets.filter(p => p.activo).map(p => ({ id: p.id, nombre: p.nombre, emoji: p.emoji }));
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<PersonalMovement | null>(null);
   const [confirmandoId, setConfirmandoId] = useState<string | null>(null);
@@ -28,6 +29,10 @@ export const PersonalMovimientos: React.FC = () => {
 
   const totIng = filtrados.filter(m => m.naturaleza === 'ingreso' && m.estado === 'confirmado').reduce((s, m) => s + m.valor, 0);
   const totEgr = filtrados.filter(m => m.naturaleza === 'egreso' && m.estado === 'confirmado').reduce((s, m) => s + m.valor, 0);
+  // Saldo personal acumulado (todos los confirmados, no solo el período filtrado)
+  const saldoPersonal = useMemo(() =>
+    movements.filter(m => m.estado === 'confirmado').reduce((s, m) => s + (m.naturaleza === 'ingreso' ? m.valor : -m.valor), 0),
+    [movements]);
 
   const confirmar = async (id: string) => {
     setConfirmandoId(id);
@@ -50,6 +55,21 @@ export const PersonalMovimientos: React.FC = () => {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', paddingBottom: '5rem' }}>
       <PersonalHeader titulo="📒 Movimientos" sub="El registro madre — todo tu mundo personal conecta aquí." />
 
+      {/* Resumen grande — mismo esqueleto que Impulsy */}
+      <div className="resp-grid-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '1rem' }}>
+        {[
+          { label: 'Ingresos confirmados', value: fmt(totIng),          color: '#10b981' },
+          { label: 'Gastos confirmados',   value: fmt(totEgr),          color: '#ef4444' },
+          { label: 'Balance del período',  value: fmt(totIng - totEgr), color: totIng - totEgr >= 0 ? '#10b981' : '#ef4444' },
+          { label: 'Saldo personal',        value: fmt(saldoPersonal),   color: saldoPersonal >= 0 ? GOLD : '#ef4444' },
+        ].map(s => (
+          <div key={s.label} className="card stat-card" style={{ minHeight: 'auto', padding: '1rem' }}>
+            <span className="stat-label">{s.label}</span>
+            <span className="stat-value" style={{ color: s.color, fontSize: '1.4rem' }}>{s.value}</span>
+          </div>
+        ))}
+      </div>
+
       {/* Filtros */}
       <div className="card" style={{ padding: '0.875rem 1rem' }}>
         <div className="resp-form" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1.4fr', gap: '0.5rem' }}>
@@ -71,10 +91,7 @@ export const PersonalMovimientos: React.FC = () => {
           <input style={inp} placeholder="Buscar descripción..." value={filtros.busqueda} onChange={e => setFiltros(f => ({ ...f, busqueda: e.target.value }))} />
         </div>
         <div style={{ display: 'flex', gap: '1.25rem', marginTop: '0.6rem', fontSize: '0.75rem' }}>
-          <span style={{ color: '#52525b' }}>{filtrados.length} movimiento(s)</span>
-          <span style={{ color: '#10b981', fontWeight: 700 }}>↑ {fmtK(totIng)}</span>
-          <span style={{ color: '#ef4444', fontWeight: 700 }}>↓ {fmtK(totEgr)}</span>
-          <span style={{ color: totIng - totEgr >= 0 ? '#10b981' : '#ef4444', fontWeight: 800 }}>= {fmtK(totIng - totEgr)}</span>
+          <span style={{ color: '#52525b' }}>{filtrados.length} movimiento(s) en este filtro</span>
         </div>
       </div>
 
@@ -132,7 +149,7 @@ export const PersonalMovimientos: React.FC = () => {
       </button>
 
       {modalOpen && (
-        <AddPersonalModal onClose={() => { setModalOpen(false); setEditing(null); }} onSave={guardarEdicion} editing={editing} />
+        <AddPersonalModal onClose={() => { setModalOpen(false); setEditing(null); }} onSave={guardarEdicion} editing={editing} pockets={bolsillosActivos} />
       )}
     </div>
   );

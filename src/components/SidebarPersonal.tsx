@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { Home, NotebookPen, TrendingUp, Target, CreditCard, BarChart2, LogOut, ArrowLeftRight } from 'lucide-react';
+import { Home, NotebookPen, TrendingUp, Target, CreditCard, BarChart2, LogOut, ArrowLeftRight, Split } from 'lucide-react';
 
 interface Props { onLogout?: () => void; }
 
@@ -37,6 +37,7 @@ export const SidebarPersonal: React.FC<Props> = ({ onLogout }) => {
       <nav className="sidebar-nav" style={{ paddingBottom: '2rem', gap: '0.25rem' }}>
         <div className="sidebar-section-label" style={{ color: GOLD }}>Mi mundo</div>
         {link('/personal',             <Home        size={18} />, 'Hoy',               '¿Cómo estoy?', true)}
+        {link('/personal/distribuir',  <Split       size={18} />, 'Distribuir',        'A dónde va cada peso')}
         {link('/personal/movimientos', <NotebookPen size={18} />, 'Movimientos',       'Registro diario')}
         {link('/personal/proyeccion',  <TrendingUp  size={18} />, 'Proyección',        'Fijos y presupuesto')}
         {link('/personal/bolsillos',   <Target      size={18} />, 'Bolsillos y Metas', 'Aparta y cumple')}

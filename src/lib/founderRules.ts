@@ -2,16 +2,24 @@ import { LedgerMovement } from '../types';
 import { fechaISO } from './dates';
 
 // ── Reglas Inviolables del Fundador ──────────────────────────────
-// Calibradas con Agustín el 11 jun 2026, sobre datos reales:
-// salario histórico ~$1.4M/quincena, margen del negocio ~$3.3M/mes.
+// Modelo BASE + BONO (decidido con Agustín, 16 jun 2026):
+//  • Base garantizada $800k/quincena ($1.6M/mes) — se paga pase lo que pase.
+//  • Bono = 30% de la utilidad del mes, solo si la empresa rindió (candados).
+//  • La empresa SOLO paga salario; ningún otro retiro. Lo personal va aparte.
 export const FOUNDER_RULES = {
-  salarioQuincenal: 1_250_000,
+  salarioQuincenal: 800_000,   // BASE quincenal garantizada
+  bonoPctUtilidad: 0.30,       // 30% de la utilidad mensual como bono
   reservaMeta: 24_000_000,     // Core Capital Target: 2 meses de operación
   inicioRegimen: '2026-06-16', // primera quincena limpia del nuevo sistema
 };
 
 const MESES_CORTOS = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
 const pad = (n: number) => String(n).padStart(2, '0');
+
+// Movimientos que cuentan en la utilidad del mes (P&L): se excluyen ajustes
+// de conciliación y aportes de capital (no son desempeño operativo).
+const cuentaEnPL = (m: LedgerMovement) =>
+  m.tipoMovimiento !== 'ajuste' && m.tipoMovimiento !== 'aporte_capital';
 
 export interface Quincena {
   id: string;        // '2026-06-Q2' — usado como marcador en notas del pago
@@ -70,6 +78,41 @@ export interface FounderStatus {
   proximoPago: { fecha: string; monto: number; pagado: boolean };
   racha: number;              // quincenas cerradas consecutivas dentro del presupuesto
   quincenasCerradas: number;
+}
+
+// ── Bono mensual: 30% de la utilidad del mes, con candados ────────
+export interface BonoMes {
+  mes: string;              // '2026-06'
+  mesLabel: string;
+  ingresos: number;         // ingresos confirmados del mes (P&L)
+  egresos: number;          // egresos confirmados del mes (P&L, incluye base ya pagada)
+  utilidad: number;         // ingresos − egresos
+  califica: boolean;        // candado: utilidad positiva
+  bono: number;             // 30% de la utilidad si califica
+  pagado: number;           // bono ya pagado este mes
+  pendiente: number;        // bono por cobrar
+  cierreMes: string;        // último día del mes (cuándo se paga el bono)
+}
+
+export function calcBonoMes(movements: LedgerMovement[], hoy: Date = new Date()): BonoMes {
+  const y = hoy.getFullYear(), m = hoy.getMonth();
+  const ms = `${y}-${pad(m + 1)}`;
+  const lastDay = new Date(y, m + 1, 0).getDate();
+  const conf = movements.filter(mv => mv.estado === 'confirmado' && mv.fecha.startsWith(ms) && cuentaEnPL(mv));
+  const ingresos = conf.filter(mv => mv.naturaleza === 'ingreso').reduce((s, mv) => s + mv.valor, 0);
+  const egresos  = conf.filter(mv => mv.naturaleza === 'egreso').reduce((s, mv) => s + mv.valor, 0);
+  const utilidad = ingresos - egresos;
+  const califica = utilidad > 0;
+  const bono = califica ? Math.round(utilidad * FOUNDER_RULES.bonoPctUtilidad) : 0;
+  const pagado = movements
+    .filter(mv => mv.estado === 'confirmado' && mv.notas === `founder:bono:${ms}`)
+    .reduce((s, mv) => s + mv.valor, 0);
+  return {
+    mes: ms, mesLabel: `${MESES_CORTOS[m]} ${y}`,
+    ingresos, egresos, utilidad, califica, bono, pagado,
+    pendiente: Math.max(0, bono - pagado),
+    cierreMes: `${ms}-${pad(lastDay)}`,
+  };
 }
 
 export function calcFounderStatus(movements: LedgerMovement[], hoy: Date = new Date()): FounderStatus {

@@ -7,6 +7,7 @@ import { SidebarV2 }    from './components/SidebarV2';
 import { Inicio }       from './pages/v2/Inicio';
 import { ProyectosV2 }  from './pages/v2/ProyectosV2';
 import { Adquisicion }  from './pages/v2/Adquisicion';
+import { Nomina }       from './pages/v2/Nomina';
 import { Finanzas }     from './pages/v2/Finanzas';
 import { Resumen }      from './pages/v2/Resumen';
 import { Equipo }       from './pages/v2/Equipo';
@@ -14,6 +15,7 @@ import { Equipo }       from './pages/v2/Equipo';
 // ── Mundo Personal (interruptor de mundos) ───────────────
 import { SidebarPersonal }    from './components/SidebarPersonal';
 import { PersonalHoy }        from './pages/v2/personal/Hoy';
+import { PersonalDistribuir } from './pages/v2/personal/Distribuir';
 import { PersonalMovimientos } from './pages/v2/personal/Movimientos';
 import { PersonalProyeccion } from './pages/v2/personal/Proyeccion';
 import { PersonalBolsillos }  from './pages/v2/personal/Bolsillos';
@@ -60,12 +62,14 @@ function Shell({ onLogout }: { onLogout: () => void }) {
           <Route path="/proyectos" element={<ProyectosV2 />} />
           <Route path="/clientes"  element={<ProyectosV2 />} />
           <Route path="/adquisicion" element={<Adquisicion />} />
+          <Route path="/nomina"    element={<Nomina />} />
           <Route path="/finanzas"  element={<Finanzas />} />
           <Route path="/equipo"    element={<Equipo />} />
           <Route path="/resumen"   element={<Resumen />} />
 
           {/* ── Mundo Personal ── */}
           <Route path="/personal"             element={<PersonalHoy />} />
+          <Route path="/personal/distribuir"  element={<PersonalDistribuir />} />
           <Route path="/personal/movimientos" element={<PersonalMovimientos />} />
           <Route path="/personal/proyeccion"  element={<PersonalProyeccion />} />
           <Route path="/personal/bolsillos"   element={<PersonalBolsillos />} />

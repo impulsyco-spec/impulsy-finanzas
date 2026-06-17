@@ -262,6 +262,7 @@ export const PersonalHoy: React.FC = () => {
 
       {modalOpen && (
         <AddPersonalModal onClose={() => setModalOpen(false)}
+          pockets={pockets.filter(p => p.activo).map(p => ({ id: p.id, nombre: p.nombre, emoji: p.emoji }))}
           onSave={async m => { await addMovement(m); setModalOpen(false); }} />
       )}
     </div>
