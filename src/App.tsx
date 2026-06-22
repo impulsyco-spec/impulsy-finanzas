@@ -8,6 +8,7 @@ import { Inicio }       from './pages/v2/Inicio';
 import { ProyectosV2 }  from './pages/v2/ProyectosV2';
 import { Adquisicion }  from './pages/v2/Adquisicion';
 import { Nomina }       from './pages/v2/Nomina';
+import { Productividad } from './pages/v2/Productividad';
 import { Finanzas }     from './pages/v2/Finanzas';
 import { Resumen }      from './pages/v2/Resumen';
 import { Equipo }       from './pages/v2/Equipo';
@@ -63,6 +64,7 @@ function Shell({ onLogout }: { onLogout: () => void }) {
           <Route path="/clientes"  element={<ProyectosV2 />} />
           <Route path="/adquisicion" element={<Adquisicion />} />
           <Route path="/nomina"    element={<Nomina />} />
+          <Route path="/productividad" element={<Productividad />} />
           <Route path="/finanzas"  element={<Finanzas />} />
           <Route path="/equipo"    element={<Equipo />} />
           <Route path="/resumen"   element={<Resumen />} />
