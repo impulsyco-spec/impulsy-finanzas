@@ -43,5 +43,18 @@ export function useGHL() {
     return d as GhlContacto;
   }, []);
 
-  return { leads, stages, pipeline, cargando, error, cargado, cargar, traerContacto };
+  // Escribe de vuelta a GHL: nota + empresa/email + mover etapa
+  const sincronizar = useCallback(async (payload: {
+    contactId?: string; opportunityId?: string; desenlace: string;
+    companyName?: string; email?: string; nota?: string; intentos?: number;
+  }) => {
+    const r = await fetch('/api/ghl?action=syncCall', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'No se pudo sincronizar con GHL');
+    return d as { ok: boolean; nota: boolean; contacto: boolean; etapa: string | null };
+  }, []);
+
+  return { leads, stages, pipeline, cargando, error, cargado, cargar, traerContacto, sincronizar };
 }

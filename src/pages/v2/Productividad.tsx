@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Phone, PhoneMissed, Target, Clock, CalendarCheck, Copy, Check, BarChart2, Play, Square, Trash2, Users, RefreshCw } from 'lucide-react';
+import { Phone, PhoneMissed, Target, Clock, CalendarCheck, Copy, Check, BarChart2, Play, Square, Trash2, Users, RefreshCw, FileText, X } from 'lucide-react';
 import { useProductividad, Cualificacion, Desenlace, ProdLlamada } from '../../hooks/useProductividad';
 import { useGHL, GhlLead } from '../../hooks/useGHL';
 
@@ -20,12 +20,16 @@ const DESENLACES: { id: Desenlace; label: string; emoji: string; color: string }
   { id: 'colgo',         label: 'Colgó',         emoji: '📴', color: '#ef4444' },
 ];
 
-const EMPTY_CUALIF: Cualificacion = { nombre: '', negocio: '', ticket: '', volumen: '', objetivo: '', notas: '' };
+const EMPTY_CUALIF: Cualificacion = {
+  nombre: '', negocio: '', aQueSeDedica: '', email: '', ticket: '', volumen: '', objetivo: '', notas: '',
+  decisor: false, emailConfirmado: false, pidioAviso: false, urgencia: false,
+};
 
 export const Productividad: React.FC = () => {
   const { llamadas, sesiones, loading, setupError, sesionActiva, refetch, empezarRonda, terminarRonda, registrarLlamada, borrarSesion } = useProductividad();
   const ghl = useGHL();
   const [leadActual, setLeadActual] = useState<GhlLead | null>(null);
+  const [fichaLead, setFichaLead] = useState<GhlLead | null>(null);
   const [filtroEtapa, setFiltroEtapa] = useState<string>('');
   const [vista, setVista] = useState<'operar' | 'metricas'>('operar');
   const [ahora, setAhora] = useState(Date.now());
@@ -48,6 +52,13 @@ export const Productividad: React.FC = () => {
   const rondaTotal = llamadasRonda.length;
   const rondaContestadas = llamadasRonda.filter(l => l.contesto).length;
   const rondaAgendados = llamadasRonda.filter(l => l.desenlace === 'agendado').length;
+
+  // Intentos por contacto (todas las rondas) — para el contador y el auto-enfriado
+  const intentosPorContacto = useMemo(() => {
+    const m: Record<string, number> = {};
+    llamadas.forEach(l => { const id = l.cualif?._contactId; if (id) m[id] = (m[id] || 0) + 1; });
+    return m;
+  }, [llamadas]);
 
   const rondaSeg = sesionActiva ? (ahora - new Date(sesionActiva.inicio).getTime()) / 1000 : 0;
   const llamadaSeg = enLlamada ? (ahora - enLlamada) / 1000 : 0;
@@ -80,8 +91,18 @@ export const Productividad: React.FC = () => {
     try {
       await registrarLlamada({
         sesionId: sesionActiva.id, inicio: new Date().toISOString(), contesto: false, desenlace: 'no_contesto',
-        cualif: leadActual ? { _contactId: leadActual.contactId, _lead: leadActual.nombre } : undefined,
+        cualif: leadActual ? { _contactId: leadActual.contactId, _oppId: leadActual.id, _lead: leadActual.nombre } : undefined,
       });
+      // Auto-enfriado: al 7º intento sin contestar, pásalo a Enfriado en GHL
+      if (leadActual?.contactId) {
+        const intentos = (intentosPorContacto[leadActual.contactId] || 0) + 1;
+        if (intentos >= 7) {
+          try {
+            await ghl.sincronizar({ contactId: leadActual.contactId, opportunityId: leadActual.id, desenlace: 'no_contesto', intentos });
+            alert(`${leadActual.nombre} llegó a ${intentos} intentos → movido a ❄️ Enfriado en GHL.`);
+          } catch (e: any) { console.error('auto-enfriado:', e.message); }
+        }
+      }
       setLeadActual(null);
     } catch (e: any) { alert('Error: ' + e.message); } finally { setBusy(false); }
   };
@@ -94,8 +115,10 @@ export const Productividad: React.FC = () => {
         const c = await ghl.traerContacto(leadActual.contactId);
         const campos = c.campos || {};
         setCualif({
+          ...EMPTY_CUALIF,
           nombre: c.nombre || leadActual.nombre || '',
-          negocio: '', ticket: '', volumen: '',
+          negocio: c.empresa || '',
+          email: c.email || '',
           objetivo: campos['¿Cúal es el objetivo de tu negocio?'] || '',
           notas: Object.entries(campos).map(([k, v]) => `${k}: ${v}`).join('\n'),
         });
@@ -109,27 +132,47 @@ export const Productividad: React.FC = () => {
     if (!sesionActiva || !enLlamada) return;
     const dur = Math.round((Date.now() - enLlamada) / 1000);
     const cualifFinal: Cualificacion = { ...cualif };
-    if (leadActual) { cualifFinal._contactId = leadActual.contactId; cualifFinal._lead = leadActual.nombre; }
-    const hayDatos = Object.values(cualif).some(v => (v || '').trim()) || !!leadActual;
+    if (leadActual) { cualifFinal._contactId = leadActual.contactId; cualifFinal._oppId = leadActual.id; cualifFinal._lead = leadActual.nombre; }
+    const hayTexto = Object.values(cualif).some(v => typeof v === 'string' && v.trim());
     setBusy(true);
     try {
       await registrarLlamada({
         sesionId: sesionActiva.id, inicio: new Date(enLlamada).toISOString(),
         contesto: true, desenlace: d, duracionSeg: dur,
-        cualif: hayDatos ? cualifFinal : undefined,
+        cualif: (hayTexto || leadActual) ? cualifFinal : undefined,
       });
+      // Sincronizar a GHL: nota + empresa/email + mover etapa segun desenlace
+      if (leadActual?.contactId) {
+        try {
+          const fecha = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'short', timeStyle: 'short' });
+          const r = await ghl.sincronizar({
+            contactId: leadActual.contactId, opportunityId: leadActual.id, desenlace: d,
+            companyName: cualif.negocio || undefined, email: cualif.email || undefined,
+            nota: `📞 Llamada (${d}) · ${fecha}\n${textoCualif()}`,
+          });
+          if (r.etapa) console.log('GHL: movido a', r.etapa);
+        } catch (e: any) { alert('La llamada se guardó, pero no se pudo sincronizar a GHL: ' + e.message); }
+      }
       setEnLlamada(null); setCualif(EMPTY_CUALIF); setCopiado(false); setLeadActual(null);
     } catch (e: any) { alert('Error: ' + e.message); } finally { setBusy(false); }
   };
 
   const textoCualif = () => {
     const c = cualif;
+    const chk = (b?: boolean) => (b ? '✅' : '⬜');
     return [
       c.nombre && `Cliente: ${c.nombre}`,
       c.negocio && `Negocio: ${c.negocio}`,
+      c.aQueSeDedica && `A qué se dedica: ${c.aQueSeDedica}`,
+      c.email && `Email: ${c.email}`,
       c.ticket && `Ticket promedio: ${c.ticket}`,
       c.volumen && `Volumen (leads/citas/ventas): ${c.volumen}`,
       c.objetivo && `Objetivo: ${c.objetivo}`,
+      `\nChecklist:`,
+      `${chk(c.decisor)} Es el decisor / decisores presentes`,
+      `${chk(c.emailConfirmado)} Email confirmado para la cita`,
+      `${chk(c.pidioAviso)} Pidió avisar si no puede asistir`,
+      `${chk(c.urgencia)} Urgencia ALTA`,
       c.notas && `\nNotas:\n${c.notas}`,
     ].filter(Boolean).join('\n');
   };
@@ -287,7 +330,8 @@ export const Productividad: React.FC = () => {
 
             <ListaMarcacion ghl={ghl} leadActualId={leadActual?.id} filtro={filtroEtapa} setFiltro={setFiltroEtapa}
               llamadosIds={new Set(llamadasRonda.map(l => l.cualif?._contactId).filter(Boolean) as string[])}
-              onPick={l => setLeadActual(l)} />
+              intentos={intentosPorContacto}
+              onPick={l => setLeadActual(l)} onFicha={l => setFichaLead(l)} />
           </>
         ) : (
           /* ── En llamada (contestada) ── */
@@ -309,12 +353,25 @@ export const Productividad: React.FC = () => {
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                 <CampoCualif label="Nombre" value={cualif.nombre} onChange={v => setCualif(c => ({ ...c, nombre: v }))} />
-                <CampoCualif label="Negocio / a qué se dedica" value={cualif.negocio} onChange={v => setCualif(c => ({ ...c, negocio: v }))} />
+                <CampoCualif label="🏢 Negocio (nombre → empresa en GHL)" value={cualif.negocio} onChange={v => setCualif(c => ({ ...c, negocio: v }))} />
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <CampoCualif label="A qué se dedica (actividad → nota)" value={cualif.aQueSeDedica} onChange={v => setCualif(c => ({ ...c, aQueSeDedica: v }))} />
+                </div>
+                <CampoCualif label="✉️ Email (→ se guarda en el contacto)" value={cualif.email} onChange={v => setCualif(c => ({ ...c, email: v }))} />
                 <CampoCualif label="Ticket promedio" value={cualif.ticket} onChange={v => setCualif(c => ({ ...c, ticket: v }))} />
                 <CampoCualif label="Volumen (leads/citas/ventas)" value={cualif.volumen} onChange={v => setCualif(c => ({ ...c, volumen: v }))} />
-                <div style={{ gridColumn: '1 / -1' }}>
-                  <CampoCualif label="Objetivo (económico, tiempo...)" value={cualif.objetivo} onChange={v => setCualif(c => ({ ...c, objetivo: v }))} />
+                <CampoCualif label="Objetivo (económico, tiempo...)" value={cualif.objetivo} onChange={v => setCualif(c => ({ ...c, objetivo: v }))} />
+
+                <div style={{ gridColumn: '1 / -1', marginTop: '0.25rem' }}>
+                  <label style={lblS}>Checklist — no se te olvide</label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem', marginTop: '0.35rem' }}>
+                    <CheckCualif label="Es el decisor / decisores presentes" checked={!!cualif.decisor} onChange={v => setCualif(c => ({ ...c, decisor: v }))} />
+                    <CheckCualif label="Email confirmado para la cita" checked={!!cualif.emailConfirmado} onChange={v => setCualif(c => ({ ...c, emailConfirmado: v }))} />
+                    <CheckCualif label="Pidió avisar si no puede asistir" checked={!!cualif.pidioAviso} onChange={v => setCualif(c => ({ ...c, pidioAviso: v }))} />
+                    <CheckCualif label="Urgencia ALTA para resolver" checked={!!cualif.urgencia} onChange={v => setCualif(c => ({ ...c, urgencia: v }))} />
+                  </div>
                 </div>
+
                 <div style={{ gridColumn: '1 / -1' }}>
                   <label style={lblS}>Notas libres (lo que extraigas del script)</label>
                   <textarea value={cualif.notas} onChange={e => setCualif(c => ({ ...c, notas: e.target.value }))}
@@ -383,6 +440,12 @@ export const Productividad: React.FC = () => {
           <HistorialRondas sesiones={sesiones} llamadas={llamadas} onBorrar={borrarSesion} />
         </>
       )}
+
+      {fichaLead && (
+        <FichaContacto lead={fichaLead} ghl={ghl}
+          historial={llamadas.filter(l => l.cualif?._contactId === fichaLead.contactId)}
+          onClose={() => setFichaLead(null)} />
+      )}
     </div>
   );
 };
@@ -396,6 +459,14 @@ const CampoCualif: React.FC<{ label: string; value?: string; onChange: (v: strin
     <label style={lblS}>{label}</label>
     <input style={inpS} value={value || ''} onChange={e => onChange(e.target.value)} />
   </div>
+);
+
+const CheckCualif: React.FC<{ label: string; checked: boolean; onChange: (v: boolean) => void }> = ({ label, checked, onChange }) => (
+  <button type="button" onClick={() => onChange(!checked)}
+    style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.6rem', borderRadius: '8px', border: `1px solid ${checked ? '#10b981' : '#2a2a2a'}`, background: checked ? 'rgba(16,185,129,0.1)' : '#0d0d0d', color: checked ? '#10b981' : '#a1a1aa', fontWeight: 600, fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
+    <span style={{ flexShrink: 0, width: '16px', height: '16px', borderRadius: '4px', border: `1.5px solid ${checked ? '#10b981' : '#52525b'}`, background: checked ? '#10b981' : 'transparent', color: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 900 }}>{checked ? '✓' : ''}</span>
+    {label}
+  </button>
 );
 
 const MiniStat: React.FC<{ label: string; value: number; color: string }> = ({ label, value, color }) => (
@@ -436,8 +507,10 @@ const ListaMarcacion: React.FC<{
   filtro: string;
   setFiltro: (s: string) => void;
   llamadosIds: Set<string>;
+  intentos: Record<string, number>;
   onPick: (l: GhlLead) => void;
-}> = ({ ghl, leadActualId, filtro, setFiltro, llamadosIds, onPick }) => {
+  onFicha: (l: GhlLead) => void;
+}> = ({ ghl, leadActualId, filtro, setFiltro, llamadosIds, intentos, onPick, onFicha }) => {
   const { leads, stages, cargando, error, cargado, cargar, pipeline } = ghl;
   const visibles = filtro ? leads.filter(l => l.etapaId === filtro) : leads;
   return (
@@ -485,12 +558,21 @@ const ListaMarcacion: React.FC<{
               const activo = l.id === leadActualId;
               return (
                 <div key={l.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.75rem', background: activo ? `${C}1a` : '#0a0a0a', borderRadius: '8px', border: activo ? `1px solid ${C}55` : '1px solid transparent', opacity: llamado ? 0.5 : 1 }}>
-                  <div style={{ minWidth: 0 }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ fontSize: '0.82rem', color: '#e4e4e7', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {llamado && '✓ '}{l.nombre}
+                      {l.contactId && intentos[l.contactId] > 0 && (
+                        <span style={{ marginLeft: '0.4rem', fontSize: '0.62rem', fontWeight: 700, color: intentos[l.contactId] >= 7 ? '#ef4444' : '#06b6d4', background: intentos[l.contactId] >= 7 ? 'rgba(239,68,68,0.12)' : 'rgba(6,182,212,0.12)', padding: '0.05rem 0.4rem', borderRadius: '999px' }}>
+                          {intentos[l.contactId]} intento{intentos[l.contactId] > 1 ? 's' : ''}
+                        </span>
+                      )}
                     </div>
                     <div style={{ fontSize: '0.66rem', color: '#52525b' }}>{l.telefono || 'sin teléfono'}{!filtro && ` · ${l.etapa}`}</div>
                   </div>
+                  <button onClick={() => onFicha(l)} title="Ver ficha"
+                    style={{ flexShrink: 0, background: 'none', border: 'none', color: '#52525b', cursor: 'pointer', padding: '0.2rem', display: 'flex' }}>
+                    <FileText size={15} />
+                  </button>
                   <button onClick={() => onPick(l)}
                     style={{ flexShrink: 0, padding: '0.35rem 0.7rem', borderRadius: '7px', border: 'none', background: activo ? C : '#1f2937', color: activo ? '#000' : '#fff', fontWeight: 700, fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit' }}>
                     {activo ? 'Elegido' : 'Marcar'}
@@ -507,6 +589,70 @@ const ListaMarcacion: React.FC<{
           </div>
         </>
       )}
+    </div>
+  );
+};
+
+const DESENLACE_LABEL: Record<string, string> = {
+  agendado: '✅ Agendado', reagendado: '🔄 Re-agendado', descalificado: '❌ Descalificado', colgo: '📴 Colgó', no_contesto: '📵 No contestó',
+};
+
+const FichaContacto: React.FC<{ lead: GhlLead; ghl: ReturnType<typeof useGHL>; historial: ProdLlamada[]; onClose: () => void }> = ({ lead, ghl, historial, onClose }) => {
+  const [c, setC] = useState<{ empresa?: string; email?: string; campos?: Record<string, string> } | null>(null);
+  const [cargando, setCargando] = useState(true);
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      try { const d = await ghl.traerContacto(lead.contactId); if (vivo) setC(d); }
+      catch { /* ignora */ } finally { if (vivo) setCargando(false); }
+    })();
+    return () => { vivo = false; };
+  }, [lead, ghl]);
+  const hist = [...historial].sort((a, b) => b.inicio.localeCompare(a.inicio));
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: '1rem' }} onClick={onClose}>
+      <div className="card" style={{ width: '520px', maxWidth: '100%', maxHeight: '85vh', overflowY: 'auto', border: `1px solid ${C}44` }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
+          <div>
+            <h3 style={{ color: '#fff', fontWeight: 800, fontSize: '1.1rem' }}>{lead.nombre}</h3>
+            <div style={{ fontSize: '0.75rem', color: '#a0aec0' }}>{lead.telefono || 'sin teléfono'} · {lead.etapa}</div>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer' }}><X size={20} /></button>
+        </div>
+
+        {/* Datos en GHL */}
+        <div className="card" style={{ padding: '0.875rem', background: '#0d0d0d', marginBottom: '0.875rem' }}>
+          <div style={{ fontSize: '0.62rem', color: C, textTransform: 'uppercase', fontWeight: 700, marginBottom: '0.4rem' }}>En GoHighLevel</div>
+          {cargando ? <div style={{ color: '#52525b', fontSize: '0.78rem' }}>Cargando datos de GHL...</div> : c ? (
+            <div style={{ fontSize: '0.78rem', color: '#a0aec0', lineHeight: 1.7 }}>
+              {c.empresa && <div><b style={{ color: '#e4e4e7' }}>Empresa:</b> {c.empresa}</div>}
+              {c.email && <div><b style={{ color: '#e4e4e7' }}>Email:</b> {c.email}</div>}
+              {c.campos && Object.entries(c.campos).map(([k, v]) => <div key={k}><b style={{ color: '#e4e4e7' }}>{k}:</b> {v}</div>)}
+              {(!c.empresa && !c.email && (!c.campos || Object.keys(c.campos).length === 0)) && <div style={{ color: '#52525b' }}>Sin datos guardados aún.</div>}
+            </div>
+          ) : <div style={{ color: '#52525b', fontSize: '0.78rem' }}>No se pudo cargar GHL.</div>}
+        </div>
+
+        {/* Historial de llamadas */}
+        <div style={{ fontSize: '0.62rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700, marginBottom: '0.5rem' }}>
+          Historial de llamadas ({hist.length})
+        </div>
+        {hist.length === 0 ? (
+          <div style={{ color: '#52525b', fontSize: '0.8rem' }}>Aún no le has llamado (registrado aquí).</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            {hist.map(h => (
+              <div key={h.id} style={{ padding: '0.6rem 0.75rem', background: '#0a0a0a', borderRadius: '8px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem' }}>
+                  <span style={{ fontWeight: 700, color: '#e4e4e7' }}>{DESENLACE_LABEL[h.desenlace] || h.desenlace}</span>
+                  <span style={{ color: '#52525b' }}>{new Date(h.inicio).toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })} {new Date(h.inicio).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+                {h.cualif?.notas && <div style={{ fontSize: '0.72rem', color: '#a0aec0', marginTop: '0.3rem', whiteSpace: 'pre-wrap' }}>{h.cualif.notas}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 };

@@ -5,12 +5,20 @@ export type Desenlace = 'no_contesto' | 'agendado' | 'reagendado' | 'descalifica
 
 export interface Cualificacion {
   nombre?: string;
-  negocio?: string;
+  negocio?: string;       // nombre del negocio -> companyName en GHL
+  aQueSeDedica?: string;  // actividad de la empresa -> nota
+  email?: string;         // -> email del contacto en GHL
   ticket?: string;
   volumen?: string;
   objetivo?: string;
   notas?: string;
-  _contactId?: string;  // enlace al contacto en GHL (para sincronizar despues)
+  // checklist obligatorio
+  decisor?: boolean;        // es el decisor / decisores presentes
+  emailConfirmado?: boolean;// confirmó el correo para la cita
+  pidioAviso?: boolean;     // pidió que avise si no puede asistir
+  urgencia?: boolean;       // urgencia alta para resolver
+  _contactId?: string;  // enlace al contacto en GHL (para sincronizar)
+  _oppId?: string;      // id de la oportunidad (para mover etapa)
   _lead?: string;       // nombre del lead de GHL
 }
 

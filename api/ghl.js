@@ -5,7 +5,8 @@ import { handleGhl } from './_ghlCore.js';
 export default async function handler(req, res) {
   try {
     const { action, ...params } = req.query || {};
-    const data = await handleGhl(action, params);
+    const body = req.method === 'POST' ? (req.body || {}) : {};
+    const data = await handleGhl(action, params, body);
     res.status(200).json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });

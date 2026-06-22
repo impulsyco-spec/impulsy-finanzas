@@ -6,7 +6,7 @@
 const BASE = 'https://services.leadconnectorhq.com';
 const PIPELINE_NAME = 'VENTAS IMPULSY';
 
-// Limpia caracteres invisibles (BOM ﻿, saltos de linea, tabs) que a veces
+// Limpia caracteres invisibles (BOM, saltos de linea, tabs) que a veces
 // se cuelan al copiar/pegar o al guardar la variable de entorno.
 const cleanEnv = (k) => (process.env[k] || '').replace(/[﻿\r\n\t]/g, '').trim();
 const TOKEN = () => cleanEnv('GHL_TOKEN');
@@ -26,13 +26,23 @@ async function ghl(path, opts = {}) {
   return txt ? JSON.parse(txt) : {};
 }
 
+// Normaliza para comparar nombres de etapa sin acentos/mayusculas/emojis
+const norm = (s) => (s || '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+
 let _pipeline = null;
 async function getPipeline() {
   if (_pipeline) return _pipeline;
   const data = await ghl(`/opportunities/pipelines?locationId=${LOC()}`);
-  _pipeline = (data.pipelines || []).find(p => (p.name || '').toUpperCase().includes(PIPELINE_NAME));
+  _pipeline = (data.pipelines || []).find(p => norm(p.name).includes(PIPELINE_NAME));
   if (!_pipeline) throw new Error(`No encontre el pipeline "${PIPELINE_NAME}"`);
   return _pipeline;
+}
+
+// id de la etapa cuyo nombre contiene `keyword` (sin acentos/emojis)
+async function stageId(keyword) {
+  const pl = await getPipeline();
+  const st = (pl.stages || []).find(s => norm(s.name).includes(norm(keyword)));
+  return st ? st.id : null;
 }
 
 let _fields = null;
@@ -44,7 +54,29 @@ async function getFieldMap() {
   return _fields;
 }
 
-export async function handleGhl(action, params = {}) {
+// ── Escrituras a GHL ──────────────────────────────────────────
+async function addNote(contactId, body) {
+  if (!contactId || !body) return;
+  await ghl(`/contacts/${contactId}/notes`, { method: 'POST', body: JSON.stringify({ body }) });
+}
+async function updateContact(contactId, patch) {
+  const clean = {};
+  if (patch.companyName) clean.companyName = patch.companyName;
+  if (patch.email) clean.email = patch.email;
+  if (!contactId || Object.keys(clean).length === 0) return false;
+  await ghl(`/contacts/${contactId}`, { method: 'PUT', body: JSON.stringify(clean) });
+  return true;
+}
+async function moveStage(opportunityId, keyword) {
+  if (!opportunityId || !keyword) return null;
+  const sid = await stageId(keyword);
+  if (!sid) return null;
+  const pl = await getPipeline();
+  await ghl(`/opportunities/${opportunityId}`, { method: 'PUT', body: JSON.stringify({ pipelineId: pl.id, pipelineStageId: sid }) });
+  return keyword;
+}
+
+export async function handleGhl(action, params = {}, body = {}) {
   if (!TOKEN() || !LOC()) {
     throw new Error('Faltan GHL_TOKEN o GHL_LOCATION_ID en el entorno (.env / Vercel).');
   }
@@ -87,8 +119,25 @@ export async function handleGhl(action, params = {}) {
       nombre: c.contactName || [c.firstName, c.lastName].filter(Boolean).join(' ') || '',
       telefono: c.phone || '',
       email: c.email || '',
+      empresa: c.companyName || '',
       campos,
     };
+  }
+
+  // Escribe el resultado de una llamada de vuelta a GHL (nota + campos + etapa)
+  if (action === 'syncCall') {
+    const { contactId, opportunityId, desenlace, companyName, email, nota, intentos } = body;
+    const resultado = { nota: false, contacto: false, etapa: null };
+    resultado.contacto = await updateContact(contactId, { companyName, email });
+    if (nota) { await addNote(contactId, nota); resultado.nota = true; }
+
+    let keyword = null;
+    if (Number(intentos) >= 7 && desenlace === 'no_contesto') keyword = 'ENFRIADO';
+    else if (desenlace === 'agendado') keyword = 'AGENDADA';
+    else if (desenlace === 'reagendado') keyword = 'RE AGENDAR';
+    else if (desenlace === 'descalificado') keyword = 'DESCUALIFICADO';
+    if (keyword) resultado.etapa = await moveStage(opportunityId, keyword);
+    return { ok: true, ...resultado };
   }
 
   throw new Error(`Accion GHL desconocida: ${action}`);

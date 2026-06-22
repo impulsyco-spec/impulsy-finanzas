@@ -13,7 +13,14 @@ function ghlDevBridge() {
         try {
           const u = new URL(req.url, 'http://localhost')
           const params = Object.fromEntries(u.searchParams.entries())
-          const data = await handleGhl(params.action, params)
+          let body = {}
+          if (req.method === 'POST') {
+            const chunks = []
+            for await (const ch of req) chunks.push(ch)
+            const raw = Buffer.concat(chunks).toString('utf8')
+            body = raw ? JSON.parse(raw) : {}
+          }
+          const data = await handleGhl(params.action, params, body)
           res.setHeader('Content-Type', 'application/json')
           res.end(JSON.stringify(data))
         } catch (e) {
