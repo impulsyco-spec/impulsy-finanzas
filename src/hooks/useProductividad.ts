@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 
-export type Desenlace = 'no_contesto' | 'agendado' | 'reagendado' | 'descalificado' | 'colgo';
+export type Desenlace = 'no_contesto' | 'numero_errado' | 'agendado' | 'reagendado' | 'descalificado' | 'colgo';
 
 export interface Cualificacion {
   nombre?: string;

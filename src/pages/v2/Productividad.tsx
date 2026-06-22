@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Phone, PhoneMissed, Target, Clock, CalendarCheck, Copy, Check, BarChart2, Play, Square, Trash2, Users, RefreshCw, FileText, X } from 'lucide-react';
+import { Phone, PhoneMissed, Target, Clock, CalendarCheck, Copy, Check, BarChart2, Play, Square, Trash2, Users, RefreshCw, FileText, X, MessageCircle, Ban } from 'lucide-react';
 import { useProductividad, Cualificacion, Desenlace, ProdLlamada } from '../../hooks/useProductividad';
 import { useGHL, GhlLead } from '../../hooks/useGHL';
 
@@ -130,6 +130,22 @@ export const Productividad: React.FC = () => {
     } catch (e: any) { alert('Error: ' + e.message); } finally { setBusy(false); }
   };
 
+  const numeroErrado = async () => {
+    if (!sesionActiva) return;
+    setBusy(true);
+    try {
+      await registrarLlamada({
+        sesionId: sesionActiva.id, inicio: new Date().toISOString(), contesto: false, desenlace: 'numero_errado',
+        cualif: leadActual ? { _contactId: leadActual.contactId, _oppId: leadActual.id, _lead: leadActual.nombre, _pais: parseTel(leadActual.telefono).pais } : undefined,
+      });
+      if (leadActual?.contactId) {
+        try { await ghl.sincronizar({ contactId: leadActual.contactId, opportunityId: leadActual.id, desenlace: 'numero_errado', nota: `⛔ Número errado / equivocado — ${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'short', timeStyle: 'short' })}` }); }
+        catch (e: any) { console.error(e.message); }
+      }
+      setLeadActual(null);
+    } catch (e: any) { alert('Error: ' + e.message); } finally { setBusy(false); }
+  };
+
   const contestada = async () => {
     setEnLlamada(Date.now()); setCopiado(false);
     if (leadActual?.contactId) {
@@ -153,6 +169,10 @@ export const Productividad: React.FC = () => {
 
   const cerrarConDesenlace = async (d: Desenlace) => {
     if (!sesionActiva || !enLlamada) return;
+    // Si agendó: abre el contacto en GHL (para reservar la cita) DENTRO del gesto del clic
+    if (d === 'agendado' && leadActual?.contactId && ghl.locationId) {
+      window.open(`https://app.gohighlevel.com/v2/location/${ghl.locationId}/contacts/detail/${leadActual.contactId}`, '_blank');
+    }
     const dur = Math.round((Date.now() - enLlamada) / 1000);
     const cualifFinal: Cualificacion = { ...cualif };
     if (leadActual) { cualifFinal._contactId = leadActual.contactId; cualifFinal._oppId = leadActual.id; cualifFinal._lead = leadActual.nombre; cualifFinal._pais = parseTel(leadActual.telefono).pais; }
@@ -341,6 +361,11 @@ export const Productividad: React.FC = () => {
                 <Phone size={26} /> Contestada
               </button>
             </div>
+
+            <button onClick={numeroErrado} disabled={busy}
+              style={{ padding: '0.75rem', borderRadius: '10px', border: '1px solid #2a2a2a', background: '#0d0d0d', color: '#a16207', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
+              <Ban size={15} /> Número errado / equivocado
+            </button>
 
             <button onClick={terminar} disabled={busy}
               style={{ padding: '0.75rem', borderRadius: '10px', border: '1px solid #2a2a2a', background: 'transparent', color: '#ef4444', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
@@ -537,7 +562,7 @@ const ListaMarcacion: React.FC<{
   onPick: (l: GhlLead) => void;
   onFicha: (l: GhlLead) => void;
 }> = ({ ghl, leadActualId, filtro, setFiltro, filtroPais, setFiltroPais, llamadosIds, intentos, onPick, onFicha }) => {
-  const { leads, stages, cargando, error, cargado, cargar, pipeline } = ghl;
+  const { leads, stages, cargando, error, cargado, cargar, pipeline, locationId } = ghl;
   // Conteo por país (según código del teléfono)
   const paisesCount: Record<string, number> = {};
   leads.forEach(l => { const c = parseTel(l.telefono).code || 'otro'; paisesCount[c] = (paisesCount[c] || 0) + 1; });
@@ -612,21 +637,20 @@ const ListaMarcacion: React.FC<{
                     </div>
                     <div style={{ fontSize: '0.66rem', color: '#52525b' }}>{l.etapa}</div>
                   </div>
+                  {locationId && l.contactId && (
+                    <a href={`https://app.gohighlevel.com/v2/location/${locationId}/contacts/detail/${l.contactId}`} target="_blank" rel="noreferrer" title="Abrir chat en GHL"
+                      style={{ flexShrink: 0, color: '#52525b', padding: '0.2rem', display: 'flex' }}>
+                      <MessageCircle size={15} />
+                    </a>
+                  )}
                   <button onClick={() => onFicha(l)} title="Ver ficha"
                     style={{ flexShrink: 0, background: 'none', border: 'none', color: '#52525b', cursor: 'pointer', padding: '0.2rem', display: 'flex' }}>
                     <FileText size={15} />
                   </button>
-                  {tel.tel ? (
-                    <a href={`tel:${tel.tel}`} onClick={() => onPick(l)} title="Marcar este número"
-                      style={{ flexShrink: 0, textDecoration: 'none', padding: '0.45rem 0.8rem', borderRadius: '9px', border: `1px solid ${activo ? C : '#2a2a2a'}`, background: activo ? `${C}22` : '#0d0d0d', color: activo ? C : '#fff', fontWeight: 800, fontSize: '1rem', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-                      {tel.display}
-                    </a>
-                  ) : (
-                    <button onClick={() => onPick(l)}
-                      style={{ flexShrink: 0, padding: '0.4rem 0.7rem', borderRadius: '8px', border: '1px solid #2a2a2a', background: '#0d0d0d', color: '#52525b', fontWeight: 700, fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit' }}>
-                      sin teléfono
-                    </button>
-                  )}
+                  <button onClick={() => onPick(l)} title="Seleccionar para registrar la llamada"
+                    style={{ flexShrink: 0, padding: '0.45rem 0.8rem', borderRadius: '9px', border: `1px solid ${activo ? C : '#2a2a2a'}`, background: activo ? `${C}22` : '#0d0d0d', color: activo ? C : (tel.display ? '#fff' : '#52525b'), fontWeight: 800, fontSize: tel.display ? '1rem' : '0.72rem', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', cursor: 'pointer', fontFamily: 'inherit' }}>
+                    {tel.display || 'sin teléfono'}
+                  </button>
                 </div>
               );
             })}
@@ -644,7 +668,7 @@ const ListaMarcacion: React.FC<{
 };
 
 const DESENLACE_LABEL: Record<string, string> = {
-  agendado: '✅ Agendado', reagendado: '🔄 Re-agendado', descalificado: '❌ Descalificado', colgo: '📴 Colgó', no_contesto: '📵 No contestó',
+  agendado: '✅ Agendado', reagendado: '🔄 Re-agendado', descalificado: '❌ Descalificado', colgo: '📴 Colgó', no_contesto: '📵 No contestó', numero_errado: '⛔ Número errado',
 };
 
 const FichaContacto: React.FC<{ lead: GhlLead; ghl: ReturnType<typeof useGHL>; historial: ProdLlamada[]; onClose: () => void }> = ({ lead, ghl, historial, onClose }) => {

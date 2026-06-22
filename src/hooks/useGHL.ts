@@ -21,6 +21,7 @@ export function useGHL() {
   const [leads, setLeads] = useState<GhlLead[]>([]);
   const [stages, setStages] = useState<{ id: string; name: string }[]>([]);
   const [pipeline, setPipeline] = useState('');
+  const [locationId, setLocationId] = useState('');
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cargado, setCargado] = useState(false);
@@ -31,7 +32,7 @@ export function useGHL() {
       const r = await fetch('/api/ghl?action=leads');
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || 'No se pudo conectar con GHL');
-      setLeads(d.leads || []); setStages(d.stages || []); setPipeline(d.pipeline || '');
+      setLeads(d.leads || []); setStages(d.stages || []); setPipeline(d.pipeline || ''); setLocationId(d.locationId || '');
       setCargado(true);
     } catch (e: any) { setError(e.message); } finally { setCargando(false); }
   }, []);
@@ -56,5 +57,5 @@ export function useGHL() {
     return d as { ok: boolean; nota: boolean; contacto: boolean; etapa: string | null };
   }, []);
 
-  return { leads, stages, pipeline, cargando, error, cargado, cargar, traerContacto, sincronizar };
+  return { leads, stages, pipeline, locationId, cargando, error, cargado, cargar, traerContacto, sincronizar };
 }

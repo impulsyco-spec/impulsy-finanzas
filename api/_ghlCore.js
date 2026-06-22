@@ -103,7 +103,7 @@ export async function handleGhl(action, params = {}, body = {}) {
       etapa: stageMap[o.pipelineStageId] || '',
       actualizado: o.lastStageChangeAt || o.updatedAt || o.createdAt,
     }));
-    return { pipeline: pl.name, stages: (pl.stages || []).map(s => ({ id: s.id, name: s.name })), leads };
+    return { pipeline: pl.name, locationId: loc, stages: (pl.stages || []).map(s => ({ id: s.id, name: s.name })), leads };
   }
 
   if (action === 'contact') {
