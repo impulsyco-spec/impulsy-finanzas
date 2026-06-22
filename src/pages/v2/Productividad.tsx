@@ -13,6 +13,28 @@ const fmtTimer = (seg: number) => {
 };
 const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 100) : 0);
 
+// Países por código de marcación (para bandera + filtro)
+const PAISES: Record<string, { flag: string; nombre: string }> = {
+  '57': { flag: '🇨🇴', nombre: 'Colombia' },
+  '52': { flag: '🇲🇽', nombre: 'México' },
+};
+// Formatea un teléfono E.164 -> { código, bandera, país, display "+57 123 456 7890", tel }
+function parseTel(raw?: string) {
+  const s = (raw || '').replace(/[^\d+]/g, '');
+  if (!s) return { code: '', flag: '🌐', pais: 'Otro', display: '', tel: '' };
+  const digits = s.replace(/^\+/, '');
+  let code = '';
+  for (const k of Object.keys(PAISES)) { if (digits.startsWith(k)) { code = k; break; } }
+  let nac = code ? digits.slice(code.length) : digits;
+  if (code === '52' && nac.length === 11 && nac[0] === '1') nac = nac.slice(1); // móvil legacy MX
+  const grupos: string[] = [];
+  let rest = nac;
+  for (const g of [3, 3, 4]) { if (rest) { grupos.push(rest.slice(0, g)); rest = rest.slice(g); } }
+  if (rest) grupos.push(rest);
+  const display = `${code ? '+' + code + ' ' : ''}${grupos.join(' ')}`.trim();
+  return { code, flag: code ? PAISES[code].flag : '🌐', pais: code ? PAISES[code].nombre : 'Otro', display, tel: s.startsWith('+') ? s : '+' + s };
+}
+
 const DESENLACES: { id: Desenlace; label: string; emoji: string; color: string }[] = [
   { id: 'agendado',      label: 'Agendado',      emoji: '✅', color: '#10b981' },
   { id: 'reagendado',    label: 'Re-agendado',   emoji: '🔄', color: '#06b6d4' },
@@ -31,6 +53,7 @@ export const Productividad: React.FC = () => {
   const [leadActual, setLeadActual] = useState<GhlLead | null>(null);
   const [fichaLead, setFichaLead] = useState<GhlLead | null>(null);
   const [filtroEtapa, setFiltroEtapa] = useState<string>('');
+  const [filtroPais, setFiltroPais] = useState<string>('');
   const [vista, setVista] = useState<'operar' | 'metricas'>('operar');
   const [ahora, setAhora] = useState(Date.now());
   const [enLlamada, setEnLlamada] = useState<number | null>(null); // ms de inicio de la llamada en curso
@@ -91,7 +114,7 @@ export const Productividad: React.FC = () => {
     try {
       await registrarLlamada({
         sesionId: sesionActiva.id, inicio: new Date().toISOString(), contesto: false, desenlace: 'no_contesto',
-        cualif: leadActual ? { _contactId: leadActual.contactId, _oppId: leadActual.id, _lead: leadActual.nombre } : undefined,
+        cualif: leadActual ? { _contactId: leadActual.contactId, _oppId: leadActual.id, _lead: leadActual.nombre, _pais: parseTel(leadActual.telefono).pais } : undefined,
       });
       // Auto-enfriado: al 7º intento sin contestar, pásalo a Enfriado en GHL
       if (leadActual?.contactId) {
@@ -132,7 +155,7 @@ export const Productividad: React.FC = () => {
     if (!sesionActiva || !enLlamada) return;
     const dur = Math.round((Date.now() - enLlamada) / 1000);
     const cualifFinal: Cualificacion = { ...cualif };
-    if (leadActual) { cualifFinal._contactId = leadActual.contactId; cualifFinal._oppId = leadActual.id; cualifFinal._lead = leadActual.nombre; }
+    if (leadActual) { cualifFinal._contactId = leadActual.contactId; cualifFinal._oppId = leadActual.id; cualifFinal._lead = leadActual.nombre; cualifFinal._pais = parseTel(leadActual.telefono).pais; }
     const hayTexto = Object.values(cualif).some(v => typeof v === 'string' && v.trim());
     setBusy(true);
     try {
@@ -329,6 +352,7 @@ export const Productividad: React.FC = () => {
             </button>
 
             <ListaMarcacion ghl={ghl} leadActualId={leadActual?.id} filtro={filtroEtapa} setFiltro={setFiltroEtapa}
+              filtroPais={filtroPais} setFiltroPais={setFiltroPais}
               llamadosIds={new Set(llamadasRonda.map(l => l.cualif?._contactId).filter(Boolean) as string[])}
               intentos={intentosPorContacto}
               onPick={l => setLeadActual(l)} onFicha={l => setFichaLead(l)} />
@@ -506,13 +530,21 @@ const ListaMarcacion: React.FC<{
   leadActualId?: string;
   filtro: string;
   setFiltro: (s: string) => void;
+  filtroPais: string;
+  setFiltroPais: (s: string) => void;
   llamadosIds: Set<string>;
   intentos: Record<string, number>;
   onPick: (l: GhlLead) => void;
   onFicha: (l: GhlLead) => void;
-}> = ({ ghl, leadActualId, filtro, setFiltro, llamadosIds, intentos, onPick, onFicha }) => {
+}> = ({ ghl, leadActualId, filtro, setFiltro, filtroPais, setFiltroPais, llamadosIds, intentos, onPick, onFicha }) => {
   const { leads, stages, cargando, error, cargado, cargar, pipeline } = ghl;
-  const visibles = filtro ? leads.filter(l => l.etapaId === filtro) : leads;
+  // Conteo por país (según código del teléfono)
+  const paisesCount: Record<string, number> = {};
+  leads.forEach(l => { const c = parseTel(l.telefono).code || 'otro'; paisesCount[c] = (paisesCount[c] || 0) + 1; });
+  const visibles = leads.filter(l =>
+    (!filtro || l.etapaId === filtro) &&
+    (!filtroPais || (parseTel(l.telefono).code || 'otro') === filtroPais)
+  );
   return (
     <div className="card" style={{ padding: '1.25rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
@@ -543,6 +575,16 @@ const ListaMarcacion: React.FC<{
 
       {cargado && (
         <>
+          {/* Filtro por país */}
+          <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+            <Chip activo={filtroPais === ''} onClick={() => setFiltroPais('')} label={`🌎 Todos (${leads.length})`} />
+            {Object.keys(PAISES).map(code => paisesCount[code]
+              ? <Chip key={code} activo={filtroPais === code} onClick={() => setFiltroPais(code)} label={`${PAISES[code].flag} ${PAISES[code].nombre} (${paisesCount[code]})`} />
+              : null)}
+            {paisesCount['otro'] ? <Chip activo={filtroPais === 'otro'} onClick={() => setFiltroPais('otro')} label={`🌐 Otro (${paisesCount['otro']})`} /> : null}
+          </div>
+
+          {/* Filtro por etapa */}
           <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
             <Chip activo={filtro === ''} onClick={() => setFiltro('')} label={`Todas (${leads.length})`} />
             {stages.map(s => {
@@ -556,27 +598,35 @@ const ListaMarcacion: React.FC<{
             {visibles.slice(0, 150).map(l => {
               const llamado = l.contactId && llamadosIds.has(l.contactId);
               const activo = l.id === leadActualId;
+              const tel = parseTel(l.telefono);
               return (
-                <div key={l.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.75rem', background: activo ? `${C}1a` : '#0a0a0a', borderRadius: '8px', border: activo ? `1px solid ${C}55` : '1px solid transparent', opacity: llamado ? 0.5 : 1 }}>
+                <div key={l.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.6rem', padding: '0.5rem 0.75rem', background: activo ? `${C}1a` : '#0a0a0a', borderRadius: '8px', border: activo ? `1px solid ${C}55` : '1px solid transparent', opacity: llamado ? 0.5 : 1 }}>
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ fontSize: '0.82rem', color: '#e4e4e7', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {llamado && '✓ '}{l.nombre}
+                      <span style={{ marginRight: '0.3rem' }}>{tel.flag}</span>{llamado && '✓ '}{l.nombre}
                       {l.contactId && intentos[l.contactId] > 0 && (
                         <span style={{ marginLeft: '0.4rem', fontSize: '0.62rem', fontWeight: 700, color: intentos[l.contactId] >= 7 ? '#ef4444' : '#06b6d4', background: intentos[l.contactId] >= 7 ? 'rgba(239,68,68,0.12)' : 'rgba(6,182,212,0.12)', padding: '0.05rem 0.4rem', borderRadius: '999px' }}>
                           {intentos[l.contactId]} intento{intentos[l.contactId] > 1 ? 's' : ''}
                         </span>
                       )}
                     </div>
-                    <div style={{ fontSize: '0.66rem', color: '#52525b' }}>{l.telefono || 'sin teléfono'}{!filtro && ` · ${l.etapa}`}</div>
+                    <div style={{ fontSize: '0.66rem', color: '#52525b' }}>{l.etapa}</div>
                   </div>
                   <button onClick={() => onFicha(l)} title="Ver ficha"
                     style={{ flexShrink: 0, background: 'none', border: 'none', color: '#52525b', cursor: 'pointer', padding: '0.2rem', display: 'flex' }}>
                     <FileText size={15} />
                   </button>
-                  <button onClick={() => onPick(l)}
-                    style={{ flexShrink: 0, padding: '0.35rem 0.7rem', borderRadius: '7px', border: 'none', background: activo ? C : '#1f2937', color: activo ? '#000' : '#fff', fontWeight: 700, fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit' }}>
-                    {activo ? 'Elegido' : 'Marcar'}
-                  </button>
+                  {tel.tel ? (
+                    <a href={`tel:${tel.tel}`} onClick={() => onPick(l)} title="Marcar este número"
+                      style={{ flexShrink: 0, textDecoration: 'none', padding: '0.45rem 0.8rem', borderRadius: '9px', border: `1px solid ${activo ? C : '#2a2a2a'}`, background: activo ? `${C}22` : '#0d0d0d', color: activo ? C : '#fff', fontWeight: 800, fontSize: '1rem', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                      {tel.display}
+                    </a>
+                  ) : (
+                    <button onClick={() => onPick(l)}
+                      style={{ flexShrink: 0, padding: '0.4rem 0.7rem', borderRadius: '8px', border: '1px solid #2a2a2a', background: '#0d0d0d', color: '#52525b', fontWeight: 700, fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit' }}>
+                      sin teléfono
+                    </button>
+                  )}
                 </div>
               );
             })}

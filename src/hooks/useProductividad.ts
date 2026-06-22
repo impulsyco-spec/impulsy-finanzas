@@ -20,6 +20,7 @@ export interface Cualificacion {
   _contactId?: string;  // enlace al contacto en GHL (para sincronizar)
   _oppId?: string;      // id de la oportunidad (para mover etapa)
   _lead?: string;       // nombre del lead de GHL
+  _pais?: string;       // país del prospecto (según el código del teléfono)
 }
 
 export interface ProdSesion {
