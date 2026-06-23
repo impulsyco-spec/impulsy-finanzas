@@ -7,6 +7,7 @@ export interface GhlLead {
   telefono: string;
   etapaId: string;
   etapa: string;
+  valor: number;
   actualizado?: string;
 }
 
@@ -48,6 +49,7 @@ export function useGHL() {
   const sincronizar = useCallback(async (payload: {
     contactId?: string; opportunityId?: string; desenlace: string;
     companyName?: string; email?: string; nota?: string; intentos?: number;
+    valor?: number; tag?: string; etapaActual?: string;
   }) => {
     const r = await fetch('/api/ghl?action=syncCall', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),

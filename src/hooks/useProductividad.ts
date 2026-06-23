@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 
-export type Desenlace = 'no_contesto' | 'numero_errado' | 'agendado' | 'reagendado' | 'descalificado' | 'colgo';
+export type Desenlace = 'no_contesto' | 'numero_errado' | 'agendado' | 'reagendado' | 'descalificado' | 'colgo' | 'whatsapp';
 
 export interface Cualificacion {
   nombre?: string;
@@ -11,6 +11,7 @@ export interface Cualificacion {
   ticket?: string;
   volumen?: string;
   objetivo?: string;
+  valorOportunidad?: string; // dinero en juego -> monetaryValue de la oportunidad en GHL
   notas?: string;
   // checklist obligatorio
   decisor?: boolean;        // es el decisor / decisores presentes
@@ -28,6 +29,8 @@ export interface ProdSesion {
   inicio: string;       // ISO
   fin?: string;         // ISO | undefined (undefined = en curso)
   nota?: string;
+  pausadoSeg: number;   // segundos acumulados en pausa
+  pausaInicio?: string; // ISO si está pausada ahora; undefined si corriendo
 }
 
 export interface ProdLlamada {
@@ -56,6 +59,8 @@ export function useProductividad() {
     setSetupError(false);
     setSesiones((sRes.data || []).map((s: any) => ({
       id: s.id, inicio: s.inicio, fin: s.fin || undefined, nota: s.nota || undefined,
+      pausadoSeg: s.pausado_seg != null ? Number(s.pausado_seg) : 0,
+      pausaInicio: s.pausa_inicio || undefined,
     })));
     setLlamadas((lRes.data || []).map((l: any) => ({
       id: l.id, sesionId: l.sesion_id, inicio: l.inicio,
@@ -78,6 +83,20 @@ export function useProductividad() {
 
   const terminarRonda = async (id: string) => {
     const { error } = await supabase.from('prod_sesiones').update({ fin: new Date().toISOString() }).eq('id', id);
+    if (error) throw error;
+    await fetchAll();
+  };
+
+  const pausarRonda = async (id: string) => {
+    const { error } = await supabase.from('prod_sesiones').update({ pausa_inicio: new Date().toISOString() }).eq('id', id);
+    if (error) throw error;
+    await fetchAll();
+  };
+
+  const reanudarRonda = async (s: ProdSesion) => {
+    if (!s.pausaInicio) return;
+    const add = Math.max(0, Math.round((Date.now() - new Date(s.pausaInicio).getTime()) / 1000));
+    const { error } = await supabase.from('prod_sesiones').update({ pausado_seg: (s.pausadoSeg || 0) + add, pausa_inicio: null }).eq('id', s.id);
     if (error) throw error;
     await fetchAll();
   };
@@ -108,6 +127,6 @@ export function useProductividad() {
 
   return {
     sesiones, llamadas, loading, setupError, sesionActiva,
-    refetch: fetchAll, empezarRonda, terminarRonda, registrarLlamada, borrarLlamada, borrarSesion,
+    refetch: fetchAll, empezarRonda, terminarRonda, pausarRonda, reanudarRonda, registrarLlamada, borrarLlamada, borrarSesion,
   };
 }

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Phone, PhoneMissed, Target, Clock, CalendarCheck, Copy, Check, BarChart2, Play, Square, Trash2, Users, RefreshCw, FileText, X, MessageCircle, Ban } from 'lucide-react';
+import { Phone, PhoneMissed, Target, Clock, CalendarCheck, Copy, Check, BarChart2, Play, Square, Trash2, Users, RefreshCw, FileText, X, MessageCircle, Ban, Pause } from 'lucide-react';
 import { useProductividad, Cualificacion, Desenlace, ProdLlamada } from '../../hooks/useProductividad';
 import { useGHL, GhlLead } from '../../hooks/useGHL';
 
@@ -12,6 +12,7 @@ const fmtTimer = (seg: number) => {
   return h > 0 ? `${h}:${pad(m)}:${pad(ss)}` : `${pad(m)}:${pad(ss)}`;
 };
 const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 100) : 0);
+const fmtMoney = (v: number) => '$' + Math.round(v || 0).toLocaleString('es-CO');
 
 // Países por código de marcación (para bandera + filtro)
 const PAISES: Record<string, { flag: string; nombre: string }> = {
@@ -38,17 +39,18 @@ function parseTel(raw?: string) {
 const DESENLACES: { id: Desenlace; label: string; emoji: string; color: string }[] = [
   { id: 'agendado',      label: 'Agendado',      emoji: '✅', color: '#10b981' },
   { id: 'reagendado',    label: 'Re-agendado',   emoji: '🔄', color: '#06b6d4' },
+  { id: 'whatsapp',      label: 'Seguir por WhatsApp', emoji: '💬', color: '#22c55e' },
   { id: 'descalificado', label: 'Descalificado', emoji: '❌', color: '#71717a' },
   { id: 'colgo',         label: 'Colgó',         emoji: '📴', color: '#ef4444' },
 ];
 
 const EMPTY_CUALIF: Cualificacion = {
-  nombre: '', negocio: '', aQueSeDedica: '', email: '', ticket: '', volumen: '', objetivo: '', notas: '',
+  nombre: '', negocio: '', aQueSeDedica: '', email: '', ticket: '', volumen: '', objetivo: '', valorOportunidad: '', notas: '',
   decisor: false, emailConfirmado: false, pidioAviso: false, urgencia: false,
 };
 
 export const Productividad: React.FC = () => {
-  const { llamadas, sesiones, loading, setupError, sesionActiva, refetch, empezarRonda, terminarRonda, registrarLlamada, borrarSesion } = useProductividad();
+  const { llamadas, sesiones, loading, setupError, sesionActiva, refetch, empezarRonda, terminarRonda, pausarRonda, reanudarRonda, registrarLlamada, borrarSesion } = useProductividad();
   const ghl = useGHL();
   const [leadActual, setLeadActual] = useState<GhlLead | null>(null);
   const [fichaLead, setFichaLead] = useState<GhlLead | null>(null);
@@ -83,8 +85,18 @@ export const Productividad: React.FC = () => {
     return m;
   }, [llamadas]);
 
-  const rondaSeg = sesionActiva ? (ahora - new Date(sesionActiva.inicio).getTime()) / 1000 : 0;
+  const enPausa = !!sesionActiva?.pausaInicio;
+  const pausadoSeg = sesionActiva
+    ? (sesionActiva.pausadoSeg || 0) + (sesionActiva.pausaInicio ? (ahora - new Date(sesionActiva.pausaInicio).getTime()) / 1000 : 0)
+    : 0;
+  const rondaSeg = sesionActiva ? (ahora - new Date(sesionActiva.inicio).getTime()) / 1000 - pausadoSeg : 0;
   const llamadaSeg = enLlamada ? (ahora - enLlamada) / 1000 : 0;
+
+  const togglePausa = async () => {
+    if (!sesionActiva) return;
+    try { if (enPausa) await reanudarRonda(sesionActiva); else await pausarRonda(sesionActiva.id); }
+    catch (e: any) { alert('Error: ' + e.message); }
+  };
 
   const empezar = async () => {
     setBusy(true);
@@ -158,6 +170,7 @@ export const Productividad: React.FC = () => {
           nombre: c.nombre || leadActual.nombre || '',
           negocio: c.empresa || '',
           email: c.email || '',
+          valorOportunidad: leadActual.valor ? String(leadActual.valor) : '',
           objetivo: campos['¿Cúal es el objetivo de tu negocio?'] || '',
           notas: Object.entries(campos).map(([k, v]) => `${k}: ${v}`).join('\n'),
         });
@@ -191,7 +204,10 @@ export const Productividad: React.FC = () => {
           const r = await ghl.sincronizar({
             contactId: leadActual.contactId, opportunityId: leadActual.id, desenlace: d,
             companyName: cualif.negocio || undefined, email: cualif.email || undefined,
-            nota: `📞 Llamada (${d}) · ${fecha}\n${textoCualif()}`,
+            nota: `📞 Llamada (${DESENLACE_LABEL[d] || d}) · ${fecha}\n${textoCualif()}`,
+            valor: cualif.valorOportunidad ? Number(cualif.valorOportunidad) : undefined,
+            tag: d === 'whatsapp' ? 'seguir-whatsapp' : undefined,
+            etapaActual: leadActual.etapaId,
           });
           if (r.etapa) console.log('GHL: movido a', r.etapa);
         } catch (e: any) { alert('La llamada se guardó, pero no se pudo sincronizar a GHL: ' + e.message); }
@@ -324,11 +340,11 @@ export const Productividad: React.FC = () => {
         ) : !enLlamada ? (
           /* ── Ronda activa, esperando llamada ── */
           <>
-            <div className="card" style={{ padding: '1.25rem', border: `1px solid ${C}33`, textAlign: 'center' }}>
-              <div style={{ fontSize: '0.62rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}>
-                <Clock size={12} /> Ronda en curso
+            <div className="card" style={{ padding: '1.25rem', border: `1px solid ${enPausa ? '#f59e0b55' : C + '33'}`, textAlign: 'center' }}>
+              <div style={{ fontSize: '0.62rem', color: enPausa ? '#f59e0b' : '#52525b', textTransform: 'uppercase', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}>
+                <Clock size={12} /> {enPausa ? 'EN PAUSA' : 'Ronda en curso'}
               </div>
-              <div style={{ fontSize: '2.6rem', fontWeight: 900, color: C, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}>{fmtTimer(rondaSeg)}</div>
+              <div style={{ fontSize: '2.6rem', fontWeight: 900, color: enPausa ? '#f59e0b' : C, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}>{fmtTimer(rondaSeg)}</div>
               <div className="resp-grid-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '0.75rem', marginTop: '1rem' }}>
                 <MiniStat label="Llamadas" value={rondaTotal} color="#fff" />
                 <MiniStat label="Contestadas" value={rondaContestadas} color="#06b6d4" />
@@ -352,25 +368,31 @@ export const Productividad: React.FC = () => {
             )}
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              <button onClick={noContesto} disabled={busy}
+              <button onClick={noContesto} disabled={busy || enPausa}
                 style={{ padding: '1.5rem', borderRadius: '14px', border: '1px solid #2a2a2a', background: '#0d0d0d', color: '#a1a1aa', fontWeight: 800, fontSize: '1rem', cursor: 'pointer', fontFamily: 'inherit', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
                 <PhoneMissed size={26} /> No contestó
               </button>
-              <button onClick={contestada} disabled={busy}
+              <button onClick={contestada} disabled={busy || enPausa}
                 style={{ padding: '1.5rem', borderRadius: '14px', border: 'none', background: '#10b981', color: '#000', fontWeight: 800, fontSize: '1rem', cursor: 'pointer', fontFamily: 'inherit', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
                 <Phone size={26} /> Contestada
               </button>
             </div>
 
-            <button onClick={numeroErrado} disabled={busy}
+            <button onClick={numeroErrado} disabled={busy || enPausa}
               style={{ padding: '0.75rem', borderRadius: '10px', border: '1px solid #2a2a2a', background: '#0d0d0d', color: '#a16207', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
               <Ban size={15} /> Número errado / equivocado
             </button>
 
-            <button onClick={terminar} disabled={busy}
-              style={{ padding: '0.75rem', borderRadius: '10px', border: '1px solid #2a2a2a', background: 'transparent', color: '#ef4444', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
-              <Square size={14} /> Terminar ronda
-            </button>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem' }}>
+              <button onClick={togglePausa} disabled={busy}
+                style={{ padding: '0.75rem', borderRadius: '10px', border: `1px solid ${enPausa ? '#f59e0b' : '#2a2a2a'}`, background: enPausa ? 'rgba(245,158,11,0.12)' : 'transparent', color: '#f59e0b', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
+                {enPausa ? <><Play size={14} /> Reanudar</> : <><Pause size={14} /> Pausar</>}
+              </button>
+              <button onClick={terminar} disabled={busy}
+                style={{ padding: '0.75rem', borderRadius: '10px', border: '1px solid #2a2a2a', background: 'transparent', color: '#ef4444', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
+                <Square size={14} /> Terminar ronda
+              </button>
+            </div>
             <button onClick={descartar} disabled={busy}
               style={{ padding: '0.4rem', background: 'none', border: 'none', color: '#52525b', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', textDecoration: 'underline' }}>
               <Trash2 size={12} /> Descartar ronda (era una prueba)
@@ -410,6 +432,7 @@ export const Productividad: React.FC = () => {
                 <CampoCualif label="Ticket promedio" value={cualif.ticket} onChange={v => setCualif(c => ({ ...c, ticket: v }))} />
                 <CampoCualif label="Volumen (leads/citas/ventas)" value={cualif.volumen} onChange={v => setCualif(c => ({ ...c, volumen: v }))} />
                 <CampoCualif label="Objetivo (económico, tiempo...)" value={cualif.objetivo} onChange={v => setCualif(c => ({ ...c, objetivo: v }))} />
+                <CampoCualif label="💰 Valor de oportunidad (→ GHL)" value={cualif.valorOportunidad} onChange={v => setCualif(c => ({ ...c, valorOportunidad: v.replace(/[^\d]/g, '') }))} />
 
                 <div style={{ gridColumn: '1 / -1', marginTop: '0.25rem' }}>
                   <label style={lblS}>Checklist — no se te olvide</label>
@@ -570,6 +593,7 @@ const ListaMarcacion: React.FC<{
     (!filtro || l.etapaId === filtro) &&
     (!filtroPais || (parseTel(l.telefono).code || 'otro') === filtroPais)
   );
+  const totalValor = visibles.reduce((s, l) => s + (l.valor || 0), 0);
   return (
     <div className="card" style={{ padding: '1.25rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
@@ -619,6 +643,12 @@ const ListaMarcacion: React.FC<{
             })}
           </div>
 
+          {/* Valor total en juego (de lo filtrado) */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0.75rem', background: `${C}11`, border: `1px solid ${C}33`, borderRadius: '8px', marginBottom: '0.6rem' }}>
+            <span style={{ fontSize: '0.72rem', color: '#a0aec0', fontWeight: 600 }}>💰 Valor en juego ({visibles.length} leads)</span>
+            <span style={{ fontSize: '1rem', fontWeight: 900, color: C }}>{fmtMoney(totalValor)}</span>
+          </div>
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', maxHeight: '420px', overflowY: 'auto' }}>
             {visibles.slice(0, 150).map(l => {
               const llamado = l.contactId && llamadosIds.has(l.contactId);
@@ -635,7 +665,7 @@ const ListaMarcacion: React.FC<{
                         </span>
                       )}
                     </div>
-                    <div style={{ fontSize: '0.66rem', color: '#52525b' }}>{l.etapa}</div>
+                    <div style={{ fontSize: '0.66rem', color: '#52525b' }}>{l.etapa}{l.valor > 0 && <span style={{ color: C }}> · {fmtMoney(l.valor)}</span>}</div>
                   </div>
                   {locationId && l.contactId && (
                     <a href={`https://app.gohighlevel.com/v2/location/${locationId}/contacts/detail/${l.contactId}`} target="_blank" rel="noreferrer" title="Abrir chat en GHL"
@@ -668,12 +698,15 @@ const ListaMarcacion: React.FC<{
 };
 
 const DESENLACE_LABEL: Record<string, string> = {
-  agendado: '✅ Agendado', reagendado: '🔄 Re-agendado', descalificado: '❌ Descalificado', colgo: '📴 Colgó', no_contesto: '📵 No contestó', numero_errado: '⛔ Número errado',
+  agendado: '✅ Agendado', reagendado: '🔄 Re-agendado', whatsapp: '💬 Seguir por WhatsApp', descalificado: '❌ Descalificado', colgo: '📴 Colgó', no_contesto: '📵 No contestó', numero_errado: '⛔ Número errado',
 };
 
 const FichaContacto: React.FC<{ lead: GhlLead; ghl: ReturnType<typeof useGHL>; historial: ProdLlamada[]; onClose: () => void }> = ({ lead, ghl, historial, onClose }) => {
   const [c, setC] = useState<{ empresa?: string; email?: string; campos?: Record<string, string> } | null>(null);
   const [cargando, setCargando] = useState(true);
+  const [nota, setNota] = useState('');
+  const [guardando, setGuardando] = useState(false);
+  const [guardado, setGuardado] = useState(false);
   useEffect(() => {
     let vivo = true;
     (async () => {
@@ -682,6 +715,17 @@ const FichaContacto: React.FC<{ lead: GhlLead; ghl: ReturnType<typeof useGHL>; h
     })();
     return () => { vivo = false; };
   }, [lead, ghl]);
+
+  const guardarNota = async () => {
+    if (!nota.trim()) return;
+    setGuardando(true);
+    try {
+      const fecha = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'short', timeStyle: 'short' });
+      await ghl.sincronizar({ contactId: lead.contactId, opportunityId: lead.id, desenlace: 'nota', nota: `📝 ${fecha}\n${nota.trim()}`, etapaActual: lead.etapaId });
+      setNota(''); setGuardado(true); setTimeout(() => setGuardado(false), 2500);
+    } catch (e: any) { alert('No se pudo guardar en GHL: ' + e.message); }
+    finally { setGuardando(false); }
+  };
   const hist = [...historial].sort((a, b) => b.inicio.localeCompare(a.inicio));
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: '1rem' }} onClick={onClose}>
@@ -705,6 +749,18 @@ const FichaContacto: React.FC<{ lead: GhlLead; ghl: ReturnType<typeof useGHL>; h
               {(!c.empresa && !c.email && (!c.campos || Object.keys(c.campos).length === 0)) && <div style={{ color: '#52525b' }}>Sin datos guardados aún.</div>}
             </div>
           ) : <div style={{ color: '#52525b', fontSize: '0.78rem' }}>No se pudo cargar GHL.</div>}
+        </div>
+
+        {/* Agregar / actualizar nota en GHL */}
+        <div style={{ marginBottom: '0.875rem' }}>
+          <div style={{ fontSize: '0.62rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700, marginBottom: '0.4rem' }}>Actualizar info / agregar nota a GHL</div>
+          <textarea value={nota} onChange={e => setNota(e.target.value)} rows={3}
+            placeholder="Lo que actualices aquí se guarda como nota en el contacto de GHL (útil para llamadas inconclusas o que siguen por WhatsApp)."
+            style={{ ...inpS, resize: 'vertical', fontFamily: 'inherit' }} />
+          <button onClick={guardarNota} disabled={guardando || !nota.trim()}
+            style={{ marginTop: '0.4rem', padding: '0.5rem 0.9rem', borderRadius: '8px', border: 'none', background: guardado ? '#10b981' : C, color: '#000', fontWeight: 800, fontSize: '0.78rem', cursor: nota.trim() ? 'pointer' : 'not-allowed', fontFamily: 'inherit' }}>
+            {guardando ? 'Guardando...' : guardado ? '✓ Guardado en GHL' : 'Guardar en GHL'}
+          </button>
         </div>
 
         {/* Historial de llamadas */}

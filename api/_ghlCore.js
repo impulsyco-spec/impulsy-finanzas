@@ -67,13 +67,9 @@ async function updateContact(contactId, patch) {
   await ghl(`/contacts/${contactId}`, { method: 'PUT', body: JSON.stringify(clean) });
   return true;
 }
-async function moveStage(opportunityId, keyword) {
-  if (!opportunityId || !keyword) return null;
-  const sid = await stageId(keyword);
-  if (!sid) return null;
-  const pl = await getPipeline();
-  await ghl(`/opportunities/${opportunityId}`, { method: 'PUT', body: JSON.stringify({ pipelineId: pl.id, pipelineStageId: sid }) });
-  return keyword;
+async function addTag(contactId, tag) {
+  if (!contactId || !tag) return;
+  await ghl(`/contacts/${contactId}/tags`, { method: 'POST', body: JSON.stringify({ tags: [tag] }) });
 }
 
 export async function handleGhl(action, params = {}, body = {}) {
@@ -101,6 +97,7 @@ export async function handleGhl(action, params = {}, body = {}) {
       telefono: o.contact?.phone || '',
       etapaId: o.pipelineStageId,
       etapa: stageMap[o.pipelineStageId] || '',
+      valor: Number(o.monetaryValue) || 0,
       actualizado: o.lastStageChangeAt || o.updatedAt || o.createdAt,
     }));
     return { pipeline: pl.name, locationId: loc, stages: (pl.stages || []).map(s => ({ id: s.id, name: s.name })), leads };
@@ -124,19 +121,33 @@ export async function handleGhl(action, params = {}, body = {}) {
     };
   }
 
-  // Escribe el resultado de una llamada de vuelta a GHL (nota + campos + etapa)
+  // Escribe el resultado de una llamada de vuelta a GHL (nota + campos + etapa + valor + tag)
   if (action === 'syncCall') {
-    const { contactId, opportunityId, desenlace, companyName, email, nota, intentos } = body;
-    const resultado = { nota: false, contacto: false, etapa: null };
+    const { contactId, opportunityId, desenlace, companyName, email, nota, intentos, valor, tag, etapaActual } = body;
+    const resultado = { nota: false, contacto: false, etapa: null, valor: false };
     resultado.contacto = await updateContact(contactId, { companyName, email });
     if (nota) { await addNote(contactId, nota); resultado.nota = true; }
+    if (tag) { try { await addTag(contactId, tag); } catch { /* ignora */ } }
 
-    let keyword = null;
-    if (Number(intentos) >= 7 && desenlace === 'no_contesto') keyword = 'ENFRIADO';
-    else if (desenlace === 'agendado') keyword = 'AGENDADA';
-    else if (desenlace === 'reagendado') keyword = 'RE AGENDAR';
-    else if (desenlace === 'descalificado') keyword = 'DESCUALIFICADO';
-    if (keyword) resultado.etapa = await moveStage(opportunityId, keyword);
+    // Etapa + status + valor de la oportunidad, en un solo PUT
+    let stageKw = null, status = null;
+    if (Number(intentos) >= 7 && desenlace === 'no_contesto') stageKw = 'ENFRIADO';
+    else if (desenlace === 'agendado') stageKw = 'AGENDADA';
+    else if (desenlace === 'reagendado') stageKw = 'RE AGENDAR';
+    else if (desenlace === 'descalificado') { stageKw = 'DESCUALIFICADO'; status = 'abandoned'; }
+
+    if (opportunityId) {
+      const pl = await getPipeline();
+      const patch = { pipelineId: pl.id };
+      let target = etapaActual || null;
+      if (stageKw) { const sid = await stageId(stageKw); if (sid) { target = sid; resultado.etapa = stageKw; } }
+      if (target) patch.pipelineStageId = target;
+      if (status) patch.status = status;
+      if (valor != null && valor !== '') { patch.monetaryValue = Number(valor) || 0; resultado.valor = true; }
+      if (patch.pipelineStageId || patch.status || patch.monetaryValue != null) {
+        await ghl(`/opportunities/${opportunityId}`, { method: 'PUT', body: JSON.stringify(patch) });
+      }
+    }
     return { ok: true, ...resultado };
   }
 

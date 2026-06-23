@@ -6,12 +6,18 @@
 
 -- Ronda de llamadas (una "sesion de caza")
 create table if not exists prod_sesiones (
-  id          uuid primary key default gen_random_uuid(),
-  inicio      timestamptz not null default now(),
-  fin         timestamptz,
-  nota        text,
-  created_at  timestamptz default now()
+  id           uuid primary key default gen_random_uuid(),
+  inicio       timestamptz not null default now(),
+  fin          timestamptz,
+  nota         text,
+  pausado_seg  int default 0,
+  pausa_inicio timestamptz,
+  created_at   timestamptz default now()
 );
+
+-- Migración (si la tabla ya existía): agrega las columnas de pausa
+alter table prod_sesiones add column if not exists pausado_seg int default 0;
+alter table prod_sesiones add column if not exists pausa_inicio timestamptz;
 
 -- Cada llamada de una ronda
 create table if not exists prod_llamadas (
