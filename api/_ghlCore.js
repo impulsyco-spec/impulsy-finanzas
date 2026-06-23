@@ -63,6 +63,11 @@ async function updateContact(contactId, patch) {
   const clean = {};
   if (patch.companyName) clean.companyName = patch.companyName;
   if (patch.email) clean.email = patch.email;
+  if (patch.name) {
+    const parts = String(patch.name).trim().split(/\s+/);
+    clean.firstName = parts.shift() || patch.name;
+    clean.lastName = parts.join(' ');
+  }
   if (!contactId || Object.keys(clean).length === 0) return false;
   await ghl(`/contacts/${contactId}`, { method: 'PUT', body: JSON.stringify(clean) });
   return true;
@@ -98,6 +103,7 @@ export async function handleGhl(action, params = {}, body = {}) {
       etapaId: o.pipelineStageId,
       etapa: stageMap[o.pipelineStageId] || '',
       valor: Number(o.monetaryValue) || 0,
+      creado: o.contact?.dateAdded || o.createdAt || null,
       actualizado: o.lastStageChangeAt || o.updatedAt || o.createdAt,
     }));
     return { pipeline: pl.name, locationId: loc, stages: (pl.stages || []).map(s => ({ id: s.id, name: s.name })), leads };
@@ -121,19 +127,28 @@ export async function handleGhl(action, params = {}, body = {}) {
     };
   }
 
+  // Trae las notas del contacto desde GHL (para el historial bidireccional)
+  if (action === 'notes') {
+    if (!params.id) throw new Error('Falta el id del contacto.');
+    const d = await ghl(`/contacts/${params.id}/notes`);
+    const notas = (d.notes || []).map(n => ({ id: n.id, body: n.body || '', fecha: n.dateAdded || n.createdAt || null }))
+      .sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+    return { notas };
+  }
+
   // Escribe el resultado de una llamada de vuelta a GHL (nota + campos + etapa + valor + tag)
   if (action === 'syncCall') {
-    const { contactId, opportunityId, desenlace, companyName, email, nota, intentos, valor, tag, etapaActual } = body;
+    const { contactId, opportunityId, desenlace, companyName, email, name, nota, intentos, valor, tag, etapaActual } = body;
     const resultado = { nota: false, contacto: false, etapa: null, valor: false };
-    resultado.contacto = await updateContact(contactId, { companyName, email });
+    resultado.contacto = await updateContact(contactId, { companyName, email, name });
     if (nota) { await addNote(contactId, nota); resultado.nota = true; }
     if (tag) { try { await addTag(contactId, tag); } catch { /* ignora */ } }
 
-    // Etapa + status + valor de la oportunidad, en un solo PUT
+    // Etapa + status + valor de la oportunidad, en un solo PUT.
+    // "reagendado" = llamar luego (NO mueve etapa, es un callback de llamada).
     let stageKw = null, status = null;
     if (Number(intentos) >= 7 && desenlace === 'no_contesto') stageKw = 'ENFRIADO';
     else if (desenlace === 'agendado') stageKw = 'AGENDADA';
-    else if (desenlace === 'reagendado') stageKw = 'RE AGENDAR';
     else if (desenlace === 'descalificado') { stageKw = 'DESCUALIFICADO'; status = 'abandoned'; }
 
     if (opportunityId) {

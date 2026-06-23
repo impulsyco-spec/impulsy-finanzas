@@ -22,6 +22,8 @@ export interface Cualificacion {
   _oppId?: string;      // id de la oportunidad (para mover etapa)
   _lead?: string;       // nombre del lead de GHL
   _pais?: string;       // país del prospecto (según el código del teléfono)
+  _recallAt?: string;   // fecha/hora para volver a llamar (re-agendado)
+  _telefono?: string;   // teléfono (para poder llamar desde la lista de re-agendadas)
 }
 
 export interface ProdSesion {

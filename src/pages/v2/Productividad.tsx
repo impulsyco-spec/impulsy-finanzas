@@ -13,6 +13,25 @@ const fmtTimer = (seg: number) => {
 };
 const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 100) : 0);
 const fmtMoney = (v: number) => '$' + Math.round(v || 0).toLocaleString('es-CO');
+const fmtFechaCorta = (iso?: string | null) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? '' : d.toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' });
+};
+// Cuenta regresiva relativa a una fecha (para re-agendadas)
+const countdown = (iso: string, ahora: number) => {
+  const t = new Date(iso).getTime() - ahora;
+  const abs = Math.abs(t);
+  const min = Math.floor(abs / 60000), h = Math.floor(min / 60), d = Math.floor(h / 24);
+  const txt = d > 0 ? `${d}d ${h % 24}h` : h > 0 ? `${h}h ${min % 60}m` : `${min}m`;
+  return t <= 0 ? `¡vencida hace ${txt}!` : `en ${txt}`;
+};
+// Valor por defecto para el datetime-local (ahora + 1h, en hora local)
+const defaultRecall = () => {
+  const d = new Date(Date.now() + 3600000);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+};
 
 // Países por código de marcación (para bandera + filtro)
 const PAISES: Record<string, { flag: string; nombre: string }> = {
@@ -38,7 +57,7 @@ function parseTel(raw?: string) {
 
 const DESENLACES: { id: Desenlace; label: string; emoji: string; color: string }[] = [
   { id: 'agendado',      label: 'Agendado',      emoji: '✅', color: '#10b981' },
-  { id: 'reagendado',    label: 'Re-agendado',   emoji: '🔄', color: '#06b6d4' },
+  { id: 'reagendado',    label: 'Llamar luego',  emoji: '📞', color: '#06b6d4' },
   { id: 'whatsapp',      label: 'Seguir por WhatsApp', emoji: '💬', color: '#22c55e' },
   { id: 'descalificado', label: 'Descalificado', emoji: '❌', color: '#71717a' },
   { id: 'colgo',         label: 'Colgó',         emoji: '📴', color: '#ef4444' },
@@ -60,6 +79,8 @@ export const Productividad: React.FC = () => {
   const [ahora, setAhora] = useState(Date.now());
   const [enLlamada, setEnLlamada] = useState<number | null>(null); // ms de inicio de la llamada en curso
   const [cualif, setCualif] = useState<Cualificacion>(EMPTY_CUALIF);
+  const [recallPicker, setRecallPicker] = useState(false);
+  const [recallAt, setRecallAt] = useState('');
   const [copiado, setCopiado] = useState(false);
   const [busy, setBusy] = useState(false);
   const [periodo, setPeriodo] = useState<'hoy' | 'semana' | 'global'>('hoy');
@@ -84,6 +105,24 @@ export const Productividad: React.FC = () => {
     llamadas.forEach(l => { const id = l.cualif?._contactId; if (id) m[id] = (m[id] || 0) + 1; });
     return m;
   }, [llamadas]);
+
+  // Re-agendadas para llamar: última llamada del contacto = "llamar luego" con fecha
+  const callbacks = useMemo(() => {
+    const latest: Record<string, typeof llamadas[number]> = {};
+    [...llamadas].sort((a, b) => a.inicio.localeCompare(b.inicio)).forEach(l => {
+      const id = l.cualif?._contactId; if (id) latest[id] = l;
+    });
+    return Object.values(latest)
+      .filter(l => l.desenlace === 'reagendado' && l.cualif?._recallAt)
+      .sort((a, b) => String(a.cualif?._recallAt).localeCompare(String(b.cualif?._recallAt)));
+  }, [llamadas]);
+
+  const irACallback = async (cb: typeof llamadas[number]) => {
+    const lead = ghl.leads.find(x => x.contactId === cb.cualif?._contactId);
+    if (!sesionActiva) { try { await empezarRonda(); } catch (e: any) { alert(e.message); return; } }
+    if (lead) setLeadActual(lead);
+    else alert('Carga tus leads de GHL (botón "Actualizar") para marcar a este contacto.');
+  };
 
   const enPausa = !!sesionActiva?.pausaInicio;
   const pausadoSeg = sesionActiva
@@ -187,8 +226,14 @@ export const Productividad: React.FC = () => {
       window.open(`https://app.gohighlevel.com/v2/location/${ghl.locationId}/contacts/detail/${leadActual.contactId}`, '_blank');
     }
     const dur = Math.round((Date.now() - enLlamada) / 1000);
+    const recallISO = (d === 'reagendado' && recallAt) ? new Date(recallAt).toISOString() : undefined;
     const cualifFinal: Cualificacion = { ...cualif };
-    if (leadActual) { cualifFinal._contactId = leadActual.contactId; cualifFinal._oppId = leadActual.id; cualifFinal._lead = leadActual.nombre; cualifFinal._pais = parseTel(leadActual.telefono).pais; }
+    if (leadActual) {
+      cualifFinal._contactId = leadActual.contactId; cualifFinal._oppId = leadActual.id;
+      cualifFinal._lead = leadActual.nombre; cualifFinal._pais = parseTel(leadActual.telefono).pais;
+      cualifFinal._telefono = leadActual.telefono;
+    }
+    if (recallISO) cualifFinal._recallAt = recallISO;
     const hayTexto = Object.values(cualif).some(v => typeof v === 'string' && v.trim());
     setBusy(true);
     try {
@@ -201,10 +246,11 @@ export const Productividad: React.FC = () => {
       if (leadActual?.contactId) {
         try {
           const fecha = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'short', timeStyle: 'short' });
+          const recallTxt = recallISO ? `📅 Pidió que lo llame de nuevo: ${new Date(recallISO).toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'short', timeStyle: 'short' })}\n` : '';
           const r = await ghl.sincronizar({
             contactId: leadActual.contactId, opportunityId: leadActual.id, desenlace: d,
             companyName: cualif.negocio || undefined, email: cualif.email || undefined,
-            nota: `📞 Llamada (${DESENLACE_LABEL[d] || d}) · ${fecha}\n${textoCualif()}`,
+            nota: `📞 Llamada (${DESENLACE_LABEL[d] || d}) · ${fecha}\n${recallTxt}${textoCualif()}`,
             valor: cualif.valorOportunidad ? Number(cualif.valorOportunidad) : undefined,
             tag: d === 'whatsapp' ? 'seguir-whatsapp' : undefined,
             etapaActual: leadActual.etapaId,
@@ -213,6 +259,7 @@ export const Productividad: React.FC = () => {
         } catch (e: any) { alert('La llamada se guardó, pero no se pudo sincronizar a GHL: ' + e.message); }
       }
       setEnLlamada(null); setCualif(EMPTY_CUALIF); setCopiado(false); setLeadActual(null);
+      setRecallPicker(false); setRecallAt('');
     } catch (e: any) { alert('Error: ' + e.message); } finally { setBusy(false); }
   };
 
@@ -336,6 +383,7 @@ export const Productividad: React.FC = () => {
               </button>
             </div>
             <ResumenHoy m={metr} onVerMetricas={() => { setPeriodo('hoy'); setVista('metricas'); }} />
+            {callbacks.length > 0 && <CallbacksCard callbacks={callbacks} ahora={ahora} onLlamar={irACallback} />}
           </>
         ) : !enLlamada ? (
           /* ── Ronda activa, esperando llamada ── */
@@ -358,6 +406,7 @@ export const Productividad: React.FC = () => {
                   <div style={{ fontSize: '0.6rem', color: C, textTransform: 'uppercase', fontWeight: 700 }}>Marcando a</div>
                   <div style={{ color: '#fff', fontWeight: 800, fontSize: '1.05rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{leadActual.nombre}</div>
                   <div style={{ fontSize: '0.78rem', color: '#a0aec0' }}>{leadActual.telefono || 'sin teléfono'} · {leadActual.etapa}</div>
+                  {leadActual.creado && <div style={{ fontSize: '0.7rem', color: '#52525b' }}>📥 Nos contactó: {fmtFechaCorta(leadActual.creado)}</div>}
                 </div>
                 <button onClick={() => setLeadActual(null)} style={{ background: 'none', border: 'none', color: '#52525b', fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline', flexShrink: 0 }}>quitar</button>
               </div>
@@ -397,6 +446,8 @@ export const Productividad: React.FC = () => {
               style={{ padding: '0.4rem', background: 'none', border: 'none', color: '#52525b', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', textDecoration: 'underline' }}>
               <Trash2 size={12} /> Descartar ronda (era una prueba)
             </button>
+
+            {callbacks.length > 0 && <CallbacksCard callbacks={callbacks} ahora={ahora} onLlamar={irACallback} />}
 
             <ListaMarcacion ghl={ghl} leadActualId={leadActual?.id} filtro={filtroEtapa} setFiltro={setFiltroEtapa}
               filtroPais={filtroPais} setFiltroPais={setFiltroPais}
@@ -458,12 +509,31 @@ export const Productividad: React.FC = () => {
               <h3 style={{ color: '#fff', fontWeight: 700, fontSize: '0.9rem', marginBottom: '0.75rem' }}>¿Cómo terminó la llamada?</h3>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                 {DESENLACES.map(d => (
-                  <button key={d.id} onClick={() => cerrarConDesenlace(d.id)} disabled={busy}
+                  <button key={d.id} disabled={busy}
+                    onClick={() => { if (d.id === 'reagendado') { if (!recallAt) setRecallAt(defaultRecall()); setRecallPicker(true); } else cerrarConDesenlace(d.id); }}
                     style={{ padding: '1rem', borderRadius: '12px', border: `1px solid ${d.color}55`, background: `${d.color}11`, color: d.color, fontWeight: 800, fontSize: '0.9rem', cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
                     <span style={{ fontSize: '1.1rem' }}>{d.emoji}</span> {d.label}
                   </button>
                 ))}
               </div>
+
+              {recallPicker && (
+                <div style={{ marginTop: '0.875rem', padding: '0.875rem', borderRadius: '12px', border: `1px solid ${C}44`, background: `${C}0d` }}>
+                  <label style={{ ...lblS, color: C }}>📞 ¿Cuándo te pidió que lo llames de nuevo?</label>
+                  <input type="datetime-local" value={recallAt} onChange={e => setRecallAt(e.target.value)}
+                    style={{ ...inpS, colorScheme: 'dark' }} />
+                  <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.6rem' }}>
+                    <button onClick={() => cerrarConDesenlace('reagendado')} disabled={busy || !recallAt}
+                      style={{ flex: 1, padding: '0.65rem', borderRadius: '9px', border: 'none', background: C, color: '#000', fontWeight: 800, fontSize: '0.82rem', cursor: 'pointer', fontFamily: 'inherit' }}>
+                      Guardar re-agenda de llamada
+                    </button>
+                    <button onClick={() => { setRecallPicker(false); }} disabled={busy}
+                      style={{ padding: '0.65rem 0.9rem', borderRadius: '9px', border: '1px solid #2a2a2a', background: 'transparent', color: '#a1a1aa', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer', fontFamily: 'inherit' }}>
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </>
         )
@@ -556,6 +626,34 @@ const BigStat: React.FC<{ label: string; value: string; hint: string; color: str
   </div>
 );
 
+const CallbacksCard: React.FC<{ callbacks: ProdLlamada[]; ahora: number; onLlamar: (cb: ProdLlamada) => void }> = ({ callbacks, ahora, onLlamar }) => (
+  <div className="card" style={{ padding: '1.25rem', border: '1px solid #06b6d433' }}>
+    <h3 style={{ color: '#fff', fontWeight: 700, fontSize: '0.95rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+      <Clock size={16} style={{ color: '#06b6d4' }} /> Re-agendadas para llamar ({callbacks.length})
+    </h3>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+      {callbacks.map(cb => {
+        const at = cb.cualif?._recallAt as string;
+        const vencida = new Date(at).getTime() <= ahora;
+        return (
+          <div key={cb.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', padding: '0.55rem 0.75rem', background: '#0a0a0a', borderRadius: '8px' }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: '0.82rem', color: '#e4e4e7', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cb.cualif?._lead || 'Contacto'}</div>
+              <div style={{ fontSize: '0.66rem', color: vencida ? '#ef4444' : '#06b6d4', fontWeight: 600 }}>
+                {new Date(at).toLocaleString('es-CO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} · {countdown(at, ahora)}
+              </div>
+            </div>
+            <button onClick={() => onLlamar(cb)}
+              style={{ flexShrink: 0, padding: '0.4rem 0.8rem', borderRadius: '8px', border: 'none', background: vencida ? '#ef4444' : '#06b6d4', color: '#000', fontWeight: 800, fontSize: '0.75rem', cursor: 'pointer', fontFamily: 'inherit' }}>
+              Llamar
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  </div>
+);
+
 const ResumenHoy: React.FC<{ m: any; onVerMetricas: () => void }> = ({ m, onVerMetricas }) => (
   <div className="card" style={{ padding: '1.25rem' }}>
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.875rem' }}>
@@ -594,6 +692,12 @@ const ListaMarcacion: React.FC<{
     (!filtroPais || (parseTel(l.telefono).code || 'otro') === filtroPais)
   );
   const totalValor = visibles.reduce((s, l) => s + (l.valor || 0), 0);
+  // Los ya llamados en esta ronda bajan al fondo; el próximo por llamar queda arriba
+  const ordenados = [...visibles].sort((a, b) => {
+    const ca = a.contactId && llamadosIds.has(a.contactId) ? 1 : 0;
+    const cb = b.contactId && llamadosIds.has(b.contactId) ? 1 : 0;
+    return ca - cb;
+  });
   return (
     <div className="card" style={{ padding: '1.25rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
@@ -650,7 +754,7 @@ const ListaMarcacion: React.FC<{
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', maxHeight: '420px', overflowY: 'auto' }}>
-            {visibles.slice(0, 150).map(l => {
+            {ordenados.slice(0, 150).map(l => {
               const llamado = l.contactId && llamadosIds.has(l.contactId);
               const activo = l.id === leadActualId;
               const tel = parseTel(l.telefono);
@@ -665,7 +769,7 @@ const ListaMarcacion: React.FC<{
                         </span>
                       )}
                     </div>
-                    <div style={{ fontSize: '0.66rem', color: '#52525b' }}>{l.etapa}{l.valor > 0 && <span style={{ color: C }}> · {fmtMoney(l.valor)}</span>}</div>
+                    <div style={{ fontSize: '0.66rem', color: '#52525b' }}>{l.etapa}{l.valor > 0 && <span style={{ color: C }}> · {fmtMoney(l.valor)}</span>}{l.creado && <span> · llegó {fmtFechaCorta(l.creado)}</span>}</div>
                   </div>
                   {locationId && l.contactId && (
                     <a href={`https://app.gohighlevel.com/v2/location/${locationId}/contacts/detail/${l.contactId}`} target="_blank" rel="noreferrer" title="Abrir chat en GHL"
@@ -698,7 +802,7 @@ const ListaMarcacion: React.FC<{
 };
 
 const DESENLACE_LABEL: Record<string, string> = {
-  agendado: '✅ Agendado', reagendado: '🔄 Re-agendado', whatsapp: '💬 Seguir por WhatsApp', descalificado: '❌ Descalificado', colgo: '📴 Colgó', no_contesto: '📵 No contestó', numero_errado: '⛔ Número errado',
+  agendado: '✅ Agendado', reagendado: '📞 Llamar luego', whatsapp: '💬 Seguir por WhatsApp', descalificado: '❌ Descalificado', colgo: '📴 Colgó', no_contesto: '📵 No contestó', numero_errado: '⛔ Número errado',
 };
 
 const FichaContacto: React.FC<{ lead: GhlLead; ghl: ReturnType<typeof useGHL>; historial: ProdLlamada[]; onClose: () => void }> = ({ lead, ghl, historial, onClose }) => {
@@ -707,14 +811,33 @@ const FichaContacto: React.FC<{ lead: GhlLead; ghl: ReturnType<typeof useGHL>; h
   const [nota, setNota] = useState('');
   const [guardando, setGuardando] = useState(false);
   const [guardado, setGuardado] = useState(false);
+  const [nombreEdit, setNombreEdit] = useState(lead.nombre);
+  const [guardandoNombre, setGuardandoNombre] = useState(false);
+  const [notasGhl, setNotasGhl] = useState<{ id: string; body: string; fecha: string | null }[]>([]);
+
+  const cargarNotas = async () => {
+    try { setNotasGhl(await ghl.traerNotas(lead.contactId)); } catch { /* ignora */ }
+  };
   useEffect(() => {
     let vivo = true;
     (async () => {
       try { const d = await ghl.traerContacto(lead.contactId); if (vivo) setC(d); }
       catch { /* ignora */ } finally { if (vivo) setCargando(false); }
+      const n = await ghl.traerNotas(lead.contactId).catch(() => []);
+      if (vivo) setNotasGhl(n);
     })();
     return () => { vivo = false; };
   }, [lead, ghl]);
+
+  const guardarNombre = async () => {
+    if (!nombreEdit.trim() || nombreEdit.trim() === lead.nombre) return;
+    setGuardandoNombre(true);
+    try {
+      await ghl.sincronizar({ contactId: lead.contactId, opportunityId: lead.id, desenlace: 'nota', name: nombreEdit.trim(), etapaActual: lead.etapaId });
+      await ghl.cargar(); // refresca la lista con el nuevo nombre
+    } catch (e: any) { alert('No se pudo actualizar el nombre en GHL: ' + e.message); }
+    finally { setGuardandoNombre(false); }
+  };
 
   const guardarNota = async () => {
     if (!nota.trim()) return;
@@ -723,6 +846,7 @@ const FichaContacto: React.FC<{ lead: GhlLead; ghl: ReturnType<typeof useGHL>; h
       const fecha = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'short', timeStyle: 'short' });
       await ghl.sincronizar({ contactId: lead.contactId, opportunityId: lead.id, desenlace: 'nota', nota: `📝 ${fecha}\n${nota.trim()}`, etapaActual: lead.etapaId });
       setNota(''); setGuardado(true); setTimeout(() => setGuardado(false), 2500);
+      await cargarNotas();
     } catch (e: any) { alert('No se pudo guardar en GHL: ' + e.message); }
     finally { setGuardando(false); }
   };
@@ -730,12 +854,21 @@ const FichaContacto: React.FC<{ lead: GhlLead; ghl: ReturnType<typeof useGHL>; h
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: '1rem' }} onClick={onClose}>
       <div className="card" style={{ width: '520px', maxWidth: '100%', maxHeight: '85vh', overflowY: 'auto', border: `1px solid ${C}44` }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
-          <div>
-            <h3 style={{ color: '#fff', fontWeight: 800, fontSize: '1.1rem' }}>{lead.nombre}</h3>
-            <div style={{ fontSize: '0.75rem', color: '#a0aec0' }}>{lead.telefono || 'sin teléfono'} · {lead.etapa}</div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem', gap: '0.5rem' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+              <input value={nombreEdit} onChange={e => setNombreEdit(e.target.value)}
+                style={{ flex: 1, background: '#0d0d0d', border: '1px solid #1f2937', borderRadius: '8px', padding: '0.35rem 0.55rem', color: '#fff', fontWeight: 800, fontSize: '1.05rem', fontFamily: 'inherit' }} />
+              {nombreEdit.trim() && nombreEdit.trim() !== lead.nombre && (
+                <button onClick={guardarNombre} disabled={guardandoNombre}
+                  style={{ flexShrink: 0, padding: '0.4rem 0.7rem', borderRadius: '8px', border: 'none', background: C, color: '#000', fontWeight: 800, fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit' }}>
+                  {guardandoNombre ? '...' : 'Guardar'}
+                </button>
+              )}
+            </div>
+            <div style={{ fontSize: '0.75rem', color: '#a0aec0', marginTop: '0.2rem' }}>{lead.telefono || 'sin teléfono'} · {lead.etapa}{lead.creado && ` · 📥 ${fmtFechaCorta(lead.creado)}`}</div>
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer' }}><X size={20} /></button>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', flexShrink: 0 }}><X size={20} /></button>
         </div>
 
         {/* Datos en GHL */}
@@ -763,7 +896,24 @@ const FichaContacto: React.FC<{ lead: GhlLead; ghl: ReturnType<typeof useGHL>; h
           </button>
         </div>
 
-        {/* Historial de llamadas */}
+        {/* Historial de notas (GHL ↔ sistema) */}
+        <div style={{ fontSize: '0.62rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700, marginBottom: '0.5rem' }}>
+          Notas (sincronizadas con GHL) ({notasGhl.length})
+        </div>
+        {notasGhl.length === 0 ? (
+          <div style={{ color: '#52525b', fontSize: '0.8rem', marginBottom: '0.875rem' }}>Sin notas todavía.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginBottom: '0.875rem', maxHeight: '240px', overflowY: 'auto' }}>
+            {notasGhl.map(n => (
+              <div key={n.id} style={{ padding: '0.6rem 0.75rem', background: '#0a0a0a', borderRadius: '8px' }}>
+                {n.fecha && <div style={{ fontSize: '0.64rem', color: '#52525b', marginBottom: '0.2rem' }}>{new Date(n.fecha).toLocaleString('es-CO', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>}
+                <div style={{ fontSize: '0.74rem', color: '#a0aec0', whiteSpace: 'pre-wrap' }}>{n.body}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Historial de llamadas (registro local) */}
         <div style={{ fontSize: '0.62rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700, marginBottom: '0.5rem' }}>
           Historial de llamadas ({hist.length})
         </div>

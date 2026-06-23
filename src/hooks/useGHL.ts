@@ -8,6 +8,7 @@ export interface GhlLead {
   etapaId: string;
   etapa: string;
   valor: number;
+  creado?: string;
   actualizado?: string;
 }
 
@@ -46,9 +47,16 @@ export function useGHL() {
   }, []);
 
   // Escribe de vuelta a GHL: nota + empresa/email + mover etapa
+  const traerNotas = useCallback(async (id: string): Promise<{ id: string; body: string; fecha: string | null }[]> => {
+    const r = await fetch(`/api/ghl?action=notes&id=${encodeURIComponent(id)}`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'No se pudieron traer las notas');
+    return d.notas || [];
+  }, []);
+
   const sincronizar = useCallback(async (payload: {
     contactId?: string; opportunityId?: string; desenlace: string;
-    companyName?: string; email?: string; nota?: string; intentos?: number;
+    companyName?: string; email?: string; name?: string; nota?: string; intentos?: number;
     valor?: number; tag?: string; etapaActual?: string;
   }) => {
     const r = await fetch('/api/ghl?action=syncCall', {
@@ -59,5 +67,5 @@ export function useGHL() {
     return d as { ok: boolean; nota: boolean; contacto: boolean; etapa: string | null };
   }, []);
 
-  return { leads, stages, pipeline, locationId, cargando, error, cargado, cargar, traerContacto, sincronizar };
+  return { leads, stages, pipeline, locationId, cargando, error, cargado, cargar, traerContacto, traerNotas, sincronizar };
 }
