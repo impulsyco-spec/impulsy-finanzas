@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 
 export interface GhlLead {
   id: string;
@@ -39,6 +39,11 @@ export function useGHL() {
     } catch (e: any) { setError(e.message); } finally { setCargando(false); }
   }, []);
 
+  // Actualiza un lead en memoria (optimista) sin re-cargar todo de GHL
+  const parcharLead = useCallback((id: string, patch: Partial<GhlLead>) => {
+    setLeads(prev => prev.map(l => (l.id === id ? { ...l, ...patch } : l)));
+  }, []);
+
   const traerContacto = useCallback(async (id: string): Promise<GhlContacto> => {
     const r = await fetch(`/api/ghl?action=contact&id=${encodeURIComponent(id)}`);
     const d = await r.json();
@@ -67,5 +72,9 @@ export function useGHL() {
     return d as { ok: boolean; nota: boolean; contacto: boolean; etapa: string | null };
   }, []);
 
-  return { leads, stages, pipeline, locationId, cargando, error, cargado, cargar, traerContacto, traerNotas, sincronizar };
+  // Objeto estable: solo cambia cuando cambian los datos, no en cada render del padre
+  return useMemo(() => ({
+    leads, stages, pipeline, locationId, cargando, error, cargado,
+    cargar, traerContacto, traerNotas, sincronizar, parcharLead,
+  }), [leads, stages, pipeline, locationId, cargando, error, cargado, cargar, traerContacto, traerNotas, sincronizar, parcharLead]);
 }

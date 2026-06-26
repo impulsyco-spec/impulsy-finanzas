@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { Phone, PhoneMissed, Target, Clock, CalendarCheck, Copy, Check, BarChart2, Play, Square, Trash2, Users, RefreshCw, FileText, X, MessageCircle, Ban, Pause } from 'lucide-react';
 import { useProductividad, Cualificacion, Desenlace, ProdLlamada } from '../../hooks/useProductividad';
 import { useGHL, GhlLead } from '../../hooks/useGHL';
@@ -105,6 +105,12 @@ export const Productividad: React.FC = () => {
     llamadas.forEach(l => { const id = l.cualif?._contactId; if (id) m[id] = (m[id] || 0) + 1; });
     return m;
   }, [llamadas]);
+
+  // Props estables para la lista (evitan re-render por el reloj que tiquea cada seg)
+  const llamadosIdsRonda = useMemo(() => new Set(llamadasRonda.map(l => l.cualif?._contactId).filter(Boolean) as string[]), [llamadasRonda]);
+  const EMPTY_IDS = useMemo(() => new Set<string>(), []);
+  const abrirFicha = useCallback((l: GhlLead) => setFichaLead(l), []);
+  const elegirLead = useCallback((l: GhlLead) => setLeadActual(l), []);
 
   // Re-agendadas para llamar: última llamada del contacto = "llamar luego" con fecha
   const callbacks = useMemo(() => {
@@ -451,9 +457,9 @@ export const Productividad: React.FC = () => {
 
             <ListaMarcacion ghl={ghl} leadActualId={leadActual?.id} filtro={filtroEtapa} setFiltro={setFiltroEtapa}
               filtroPais={filtroPais} setFiltroPais={setFiltroPais}
-              llamadosIds={new Set(llamadasRonda.map(l => l.cualif?._contactId).filter(Boolean) as string[])}
+              llamadosIds={llamadosIdsRonda}
               intentos={intentosPorContacto}
-              onPick={l => setLeadActual(l)} onFicha={l => setFichaLead(l)} />
+              onPick={elegirLead} onFicha={abrirFicha} />
           </>
         ) : (
           /* ── En llamada (contestada) ── */
@@ -541,8 +547,8 @@ export const Productividad: React.FC = () => {
         /* ── CRM (espejo de GHL, siempre visible) ── */
         <ListaMarcacion ghl={ghl} crm filtro={filtroEtapa} setFiltro={setFiltroEtapa}
           filtroPais={filtroPais} setFiltroPais={setFiltroPais}
-          llamadosIds={new Set<string>()} intentos={intentosPorContacto}
-          onPick={l => setFichaLead(l)} onFicha={l => setFichaLead(l)} />
+          llamadosIds={EMPTY_IDS} intentos={intentosPorContacto}
+          onPick={abrirFicha} onFicha={abrirFicha} />
       ) : (
         /* ── MÉTRICAS ── */
         <>
@@ -677,7 +683,7 @@ const ResumenHoy: React.FC<{ m: any; onVerMetricas: () => void }> = ({ m, onVerM
   </div>
 );
 
-const ListaMarcacion: React.FC<{
+const ListaMarcacion = React.memo(({ ghl, leadActualId, filtro, setFiltro, filtroPais, setFiltroPais, llamadosIds, intentos, onPick, onFicha, crm }: {
   ghl: ReturnType<typeof useGHL>;
   leadActualId?: string;
   filtro: string;
@@ -689,7 +695,7 @@ const ListaMarcacion: React.FC<{
   onPick: (l: GhlLead) => void;
   onFicha: (l: GhlLead) => void;
   crm?: boolean;
-}> = ({ ghl, leadActualId, filtro, setFiltro, filtroPais, setFiltroPais, llamadosIds, intentos, onPick, onFicha, crm }) => {
+}) => {
   const { leads, stages, cargando, error, cargado, cargar, pipeline, locationId } = ghl;
   // Conteo por país (según código del teléfono)
   const paisesCount: Record<string, number> = {};
@@ -806,7 +812,7 @@ const ListaMarcacion: React.FC<{
       )}
     </div>
   );
-};
+});
 
 const DESENLACE_LABEL: Record<string, string> = {
   agendado: '✅ Agendado', reagendado: '📞 Llamar luego', whatsapp: '💬 Seguir por WhatsApp', descalificado: '❌ Descalificado', colgo: '📴 Colgó', no_contesto: '📵 No contestó', numero_errado: '⛔ Número errado',
@@ -851,7 +857,7 @@ const FichaContacto: React.FC<{ lead: GhlLead; ghl: ReturnType<typeof useGHL>; h
     setGuardandoNombre(true);
     try {
       await ghl.sincronizar({ contactId: lead.contactId, opportunityId: lead.id, desenlace: 'nota', name: nombreEdit.trim(), etapaActual: lead.etapaId });
-      await ghl.cargar(); // refresca la lista con el nuevo nombre
+      ghl.parcharLead(lead.id, { nombre: nombreEdit.trim() });
     } catch (e: any) { alert('No se pudo actualizar el nombre en GHL: ' + e.message); }
     finally { setGuardandoNombre(false); }
   };
@@ -864,7 +870,7 @@ const FichaContacto: React.FC<{ lead: GhlLead; ghl: ReturnType<typeof useGHL>; h
         companyName: empresaEdit || undefined, email: emailEdit || undefined,
         valor: valorEdit !== '' ? Number(valorEdit) : undefined, etapaActual: lead.etapaId,
       });
-      await ghl.cargar();
+      ghl.parcharLead(lead.id, { valor: valorEdit !== '' ? Number(valorEdit) : 0 });
       setCamposGuardados(true); setTimeout(() => setCamposGuardados(false), 2500);
     } catch (e: any) { alert('No se pudieron guardar los campos en GHL: ' + e.message); }
     finally { setGuardandoCampos(false); }
@@ -875,8 +881,9 @@ const FichaContacto: React.FC<{ lead: GhlLead; ghl: ReturnType<typeof useGHL>; h
     setCambiandoEtapa(true);
     try {
       await ghl.sincronizar({ contactId: lead.contactId, opportunityId: lead.id, desenlace: 'nota', setStageId: nuevaId, etapaActual: lead.etapaId });
-      await ghl.cargar();
-    } catch (e: any) { alert('No se pudo cambiar la etapa en GHL: ' + e.message); }
+      // Actualiza la lista al instante (sin re-cargar todo de GHL, que tarda en indexar)
+      ghl.parcharLead(lead.id, { etapaId: nuevaId, etapa: ghl.stages.find(s => s.id === nuevaId)?.name || '' });
+    } catch (e: any) { alert('No se pudo cambiar la etapa en GHL: ' + e.message); setEtapaEdit(lead.etapaId); }
     finally { setCambiandoEtapa(false); }
   };
 

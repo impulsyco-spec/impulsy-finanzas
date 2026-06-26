@@ -87,13 +87,16 @@ export async function handleGhl(action, params = {}, body = {}) {
     const pl = await getPipeline();
     const stageMap = {};
     (pl.stages || []).forEach(s => { stageMap[s.id] = s.name; });
-    let ops = [], page = 1;
-    while (page <= 10) {
-      const r = await ghl(`/opportunities/search?location_id=${loc}&pipeline_id=${pl.id}&limit=100&page=${page}`);
-      const batch = r.opportunities || [];
-      ops = ops.concat(batch);
-      if (batch.length < 100) break;
-      page++;
+    const pageUrl = (p) => `/opportunities/search?location_id=${loc}&pipeline_id=${pl.id}&limit=100&page=${p}`;
+    const first = await ghl(pageUrl(1));
+    let ops = first.opportunities || [];
+    const total = (first.meta && first.meta.total) || ops.length;
+    const totalPages = Math.min(12, Math.ceil(total / 100));
+    if (totalPages > 1) {
+      const rest = await Promise.all(
+        Array.from({ length: totalPages - 1 }, (_, i) => ghl(pageUrl(i + 2)))
+      );
+      rest.forEach(r => { ops = ops.concat(r.opportunities || []); });
     }
     const leads = ops.map(o => ({
       id: o.id,
