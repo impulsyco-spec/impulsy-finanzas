@@ -138,7 +138,7 @@ export async function handleGhl(action, params = {}, body = {}) {
 
   // Escribe el resultado de una llamada de vuelta a GHL (nota + campos + etapa + valor + tag)
   if (action === 'syncCall') {
-    const { contactId, opportunityId, desenlace, companyName, email, name, nota, intentos, valor, tag, etapaActual } = body;
+    const { contactId, opportunityId, desenlace, companyName, email, name, nota, intentos, valor, tag, etapaActual, setStageId } = body;
     const resultado = { nota: false, contacto: false, etapa: null, valor: false };
     resultado.contacto = await updateContact(contactId, { companyName, email, name });
     if (nota) { await addNote(contactId, nota); resultado.nota = true; }
@@ -156,6 +156,7 @@ export async function handleGhl(action, params = {}, body = {}) {
       const patch = { pipelineId: pl.id };
       let target = etapaActual || null;
       if (stageKw) { const sid = await stageId(stageKw); if (sid) { target = sid; resultado.etapa = stageKw; } }
+      if (setStageId) { target = setStageId; resultado.etapa = 'manual'; } // cambio de etapa explícito desde el CRM
       if (target) patch.pipelineStageId = target;
       if (status) patch.status = status;
       if (valor != null && valor !== '') { patch.monetaryValue = Number(valor) || 0; resultado.valor = true; }

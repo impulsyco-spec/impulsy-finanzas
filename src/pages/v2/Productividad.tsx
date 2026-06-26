@@ -75,7 +75,7 @@ export const Productividad: React.FC = () => {
   const [fichaLead, setFichaLead] = useState<GhlLead | null>(null);
   const [filtroEtapa, setFiltroEtapa] = useState<string>('');
   const [filtroPais, setFiltroPais] = useState<string>('');
-  const [vista, setVista] = useState<'operar' | 'metricas'>('operar');
+  const [vista, setVista] = useState<'operar' | 'crm' | 'metricas'>('operar');
   const [ahora, setAhora] = useState(Date.now());
   const [enLlamada, setEnLlamada] = useState<number | null>(null); // ms de inicio de la llamada en curso
   const [cualif, setCualif] = useState<Cualificacion>(EMPTY_CUALIF);
@@ -361,7 +361,7 @@ export const Productividad: React.FC = () => {
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: '0.4rem', background: '#111', padding: '0.25rem', borderRadius: '10px', width: 'fit-content' }}>
-        {([['operar', '🎯 Operar'], ['metricas', '📊 Métricas']] as const).map(([v, t]) => (
+        {([['operar', '🎯 Operar'], ['crm', '🗂️ CRM'], ['metricas', '📊 Métricas']] as const).map(([v, t]) => (
           <button key={v} onClick={() => setVista(v)}
             style={{ padding: '0.5rem 1rem', borderRadius: '8px', border: 'none', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer', fontFamily: 'inherit', background: vista === v ? C : 'transparent', color: vista === v ? '#000' : '#71717a' }}>
             {t}
@@ -537,6 +537,12 @@ export const Productividad: React.FC = () => {
             </div>
           </>
         )
+      ) : vista === 'crm' ? (
+        /* ── CRM (espejo de GHL, siempre visible) ── */
+        <ListaMarcacion ghl={ghl} crm filtro={filtroEtapa} setFiltro={setFiltroEtapa}
+          filtroPais={filtroPais} setFiltroPais={setFiltroPais}
+          llamadosIds={new Set<string>()} intentos={intentosPorContacto}
+          onPick={l => setFichaLead(l)} onFicha={l => setFichaLead(l)} />
       ) : (
         /* ── MÉTRICAS ── */
         <>
@@ -682,7 +688,8 @@ const ListaMarcacion: React.FC<{
   intentos: Record<string, number>;
   onPick: (l: GhlLead) => void;
   onFicha: (l: GhlLead) => void;
-}> = ({ ghl, leadActualId, filtro, setFiltro, filtroPais, setFiltroPais, llamadosIds, intentos, onPick, onFicha }) => {
+  crm?: boolean;
+}> = ({ ghl, leadActualId, filtro, setFiltro, filtroPais, setFiltroPais, llamadosIds, intentos, onPick, onFicha, crm }) => {
   const { leads, stages, cargando, error, cargado, cargar, pipeline, locationId } = ghl;
   // Conteo por país (según código del teléfono)
   const paisesCount: Record<string, number> = {};
@@ -702,7 +709,7 @@ const ListaMarcacion: React.FC<{
     <div className="card" style={{ padding: '1.25rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
         <h3 style={{ color: '#fff', fontWeight: 700, fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-          <Users size={16} style={{ color: C }} /> Lista de marcación {pipeline && <span style={{ color: '#52525b', fontWeight: 400, fontSize: '0.75rem' }}>· {pipeline}</span>}
+          <Users size={16} style={{ color: C }} /> {crm ? 'CRM' : 'Lista de marcación'} {pipeline && <span style={{ color: '#52525b', fontWeight: 400, fontSize: '0.75rem' }}>· {pipeline}</span>}
         </h3>
         {cargado && (
           <button onClick={cargar} disabled={cargando} title="Actualizar desde GHL"
@@ -814,6 +821,13 @@ const FichaContacto: React.FC<{ lead: GhlLead; ghl: ReturnType<typeof useGHL>; h
   const [nombreEdit, setNombreEdit] = useState(lead.nombre);
   const [guardandoNombre, setGuardandoNombre] = useState(false);
   const [notasGhl, setNotasGhl] = useState<{ id: string; body: string; fecha: string | null }[]>([]);
+  const [empresaEdit, setEmpresaEdit] = useState('');
+  const [emailEdit, setEmailEdit] = useState('');
+  const [valorEdit, setValorEdit] = useState(lead.valor ? String(lead.valor) : '');
+  const [guardandoCampos, setGuardandoCampos] = useState(false);
+  const [camposGuardados, setCamposGuardados] = useState(false);
+  const [etapaEdit, setEtapaEdit] = useState(lead.etapaId);
+  const [cambiandoEtapa, setCambiandoEtapa] = useState(false);
 
   const cargarNotas = async () => {
     try { setNotasGhl(await ghl.traerNotas(lead.contactId)); } catch { /* ignora */ }
@@ -821,7 +835,10 @@ const FichaContacto: React.FC<{ lead: GhlLead; ghl: ReturnType<typeof useGHL>; h
   useEffect(() => {
     let vivo = true;
     (async () => {
-      try { const d = await ghl.traerContacto(lead.contactId); if (vivo) setC(d); }
+      try {
+        const d = await ghl.traerContacto(lead.contactId);
+        if (vivo) { setC(d); setEmpresaEdit(d.empresa || ''); setEmailEdit(d.email || ''); }
+      }
       catch { /* ignora */ } finally { if (vivo) setCargando(false); }
       const n = await ghl.traerNotas(lead.contactId).catch(() => []);
       if (vivo) setNotasGhl(n);
@@ -837,6 +854,30 @@ const FichaContacto: React.FC<{ lead: GhlLead; ghl: ReturnType<typeof useGHL>; h
       await ghl.cargar(); // refresca la lista con el nuevo nombre
     } catch (e: any) { alert('No se pudo actualizar el nombre en GHL: ' + e.message); }
     finally { setGuardandoNombre(false); }
+  };
+
+  const guardarCampos = async () => {
+    setGuardandoCampos(true);
+    try {
+      await ghl.sincronizar({
+        contactId: lead.contactId, opportunityId: lead.id, desenlace: 'nota',
+        companyName: empresaEdit || undefined, email: emailEdit || undefined,
+        valor: valorEdit !== '' ? Number(valorEdit) : undefined, etapaActual: lead.etapaId,
+      });
+      await ghl.cargar();
+      setCamposGuardados(true); setTimeout(() => setCamposGuardados(false), 2500);
+    } catch (e: any) { alert('No se pudieron guardar los campos en GHL: ' + e.message); }
+    finally { setGuardandoCampos(false); }
+  };
+
+  const cambiarEtapa = async (nuevaId: string) => {
+    if (nuevaId === lead.etapaId) return;
+    setCambiandoEtapa(true);
+    try {
+      await ghl.sincronizar({ contactId: lead.contactId, opportunityId: lead.id, desenlace: 'nota', setStageId: nuevaId, etapaActual: lead.etapaId });
+      await ghl.cargar();
+    } catch (e: any) { alert('No se pudo cambiar la etapa en GHL: ' + e.message); }
+    finally { setCambiandoEtapa(false); }
   };
 
   const guardarNota = async () => {
@@ -871,17 +912,34 @@ const FichaContacto: React.FC<{ lead: GhlLead; ghl: ReturnType<typeof useGHL>; h
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', flexShrink: 0 }}><X size={20} /></button>
         </div>
 
-        {/* Datos en GHL */}
+        {/* Datos en GHL — editables, se sincronizan */}
         <div className="card" style={{ padding: '0.875rem', background: '#0d0d0d', marginBottom: '0.875rem' }}>
-          <div style={{ fontSize: '0.62rem', color: C, textTransform: 'uppercase', fontWeight: 700, marginBottom: '0.4rem' }}>En GoHighLevel</div>
-          {cargando ? <div style={{ color: '#52525b', fontSize: '0.78rem' }}>Cargando datos de GHL...</div> : c ? (
-            <div style={{ fontSize: '0.78rem', color: '#a0aec0', lineHeight: 1.7 }}>
-              {c.empresa && <div><b style={{ color: '#e4e4e7' }}>Empresa:</b> {c.empresa}</div>}
-              {c.email && <div><b style={{ color: '#e4e4e7' }}>Email:</b> {c.email}</div>}
-              {c.campos && Object.entries(c.campos).map(([k, v]) => <div key={k}><b style={{ color: '#e4e4e7' }}>{k}:</b> {v}</div>)}
-              {(!c.empresa && !c.email && (!c.campos || Object.keys(c.campos).length === 0)) && <div style={{ color: '#52525b' }}>Sin datos guardados aún.</div>}
+          <div style={{ fontSize: '0.62rem', color: C, textTransform: 'uppercase', fontWeight: 700, marginBottom: '0.5rem' }}>En GoHighLevel · editable y sincronizado</div>
+
+          <label style={lblS}>Etapa del pipeline {cambiandoEtapa && <span style={{ color: C }}>· guardando...</span>}</label>
+          <select value={etapaEdit} disabled={cambiandoEtapa}
+            onChange={e => { setEtapaEdit(e.target.value); cambiarEtapa(e.target.value); }}
+            style={{ ...inpS, marginBottom: '0.6rem' }}>
+            {ghl.stages.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem' }}>
+            <div><label style={lblS}>Empresa</label><input value={empresaEdit} onChange={e => setEmpresaEdit(e.target.value)} style={inpS} /></div>
+            <div><label style={lblS}>Email</label><input value={emailEdit} onChange={e => setEmailEdit(e.target.value)} style={inpS} /></div>
+            <div style={{ gridColumn: '1 / -1' }}><label style={lblS}>💰 Valor de oportunidad</label><input inputMode="numeric" value={valorEdit} onChange={e => setValorEdit(e.target.value.replace(/[^\d]/g, ''))} style={inpS} /></div>
+          </div>
+          <button onClick={guardarCampos} disabled={guardandoCampos}
+            style={{ marginTop: '0.5rem', padding: '0.5rem 0.9rem', borderRadius: '8px', border: 'none', background: camposGuardados ? '#10b981' : C, color: '#000', fontWeight: 800, fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit' }}>
+            {guardandoCampos ? 'Guardando...' : camposGuardados ? '✓ Guardado en GHL' : 'Guardar cambios en GHL'}
+          </button>
+
+          {cargando && <div style={{ color: '#52525b', fontSize: '0.74rem', marginTop: '0.5rem' }}>Cargando datos de GHL...</div>}
+          {c?.campos && Object.keys(c.campos).length > 0 && (
+            <div style={{ marginTop: '0.6rem', borderTop: '1px solid #1a1a1a', paddingTop: '0.5rem', fontSize: '0.74rem', color: '#a0aec0', lineHeight: 1.7 }}>
+              <div style={{ fontSize: '0.58rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700, marginBottom: '0.2rem' }}>Campos del quiz (GHL)</div>
+              {Object.entries(c.campos).map(([k, v]) => <div key={k}><b style={{ color: '#e4e4e7' }}>{k}:</b> {v}</div>)}
             </div>
-          ) : <div style={{ color: '#52525b', fontSize: '0.78rem' }}>No se pudo cargar GHL.</div>}
+          )}
         </div>
 
         {/* Agregar / actualizar nota en GHL */}

@@ -57,7 +57,7 @@ export function useGHL() {
   const sincronizar = useCallback(async (payload: {
     contactId?: string; opportunityId?: string; desenlace: string;
     companyName?: string; email?: string; name?: string; nota?: string; intentos?: number;
-    valor?: number; tag?: string; etapaActual?: string;
+    valor?: number; tag?: string; etapaActual?: string; setStageId?: string;
   }) => {
     const r = await fetch('/api/ghl?action=syncCall', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
