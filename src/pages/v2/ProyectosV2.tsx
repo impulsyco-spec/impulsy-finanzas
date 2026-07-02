@@ -338,7 +338,7 @@ export const ProyectosV2: React.FC = () => {
       </div>
 
       {/* ── TAB: CLIENTES ──────────────────────────────── */}
-      {tab === 'clientes' && <ClientesSection />}
+      {tab === 'clientes' && <ClientesSection clients={clients} projects={projects} loading={loading} refetch={refetch} />}
 
       {/* ── TAB: PROYECTOS ─────────────────────────────── */}
       {tab === 'proyectos' && (

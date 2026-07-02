@@ -1,12 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Pencil, Trash2, ChevronDown, ChevronUp, Mail, Phone, FolderKanban, X } from 'lucide-react';
-import { useSupabaseData } from '../../hooks/useSupabaseData';
 import { useLedger } from '../../hooks/useLedger';
 import { calcRentabilidad } from '../../hooks/useFinancials';
 import { AddProjectModal } from '../../components/AddProjectModal';
 import { supabase } from '../../lib/supabase';
-import { Client, ORIGEN_LABELS, OrigenCliente } from '../../types';
+import { Client, Project, ORIGEN_LABELS, OrigenCliente } from '../../types';
 
 const fmt  = (v: number) => '$' + Math.round(v).toLocaleString('es-CO');
 const fmtK = (v: number) => v >= 1_000_000 ? '$' + (v / 1_000_000).toFixed(1) + 'M' : v >= 1_000 ? '$' + (v / 1_000).toFixed(0) + 'K' : fmt(v);
@@ -32,9 +31,12 @@ const lbl: React.CSSProperties = {
   textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.3rem',
 };
 
-// Sección embebida en la página "Proyectos y Clientes" (tab Clientes)
-export const ClientesSection: React.FC = () => {
-  const { clients, projects, loading, refetch } = useSupabaseData();
+// Sección embebida en la página "Proyectos y Clientes" (tab Clientes).
+// Recibe los datos del padre (ProyectosV2) para compartir UNA sola fuente:
+// así, crear un cliente aquí refresca también el selector del modal de proyecto.
+export const ClientesSection: React.FC<{
+  clients: Client[]; projects: Project[]; loading: boolean; refetch: () => void;
+}> = ({ clients, projects, loading, refetch }) => {
   const { movements } = useLedger();
   const navigate = useNavigate();
 
