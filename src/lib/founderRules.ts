@@ -10,7 +10,7 @@ export const FOUNDER_RULES = {
   salarioQuincenal: 800_000,   // BASE quincenal garantizada
   bonoPctUtilidad: 0.30,       // 30% de la utilidad mensual como bono
   reservaMeta: 24_000_000,     // Core Capital Target: 2 meses de operación
-  inicioRegimen: '2026-06-16', // primera quincena limpia del nuevo sistema
+  inicioRegimen: '2026-07-06', // borrón y cuenta nueva: deuda con la empresa = 0 desde hoy
 };
 
 const MESES_CORTOS = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
