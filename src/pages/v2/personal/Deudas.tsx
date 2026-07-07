@@ -14,10 +14,17 @@ export const PersonalDeudas: React.FC = () => {
   const [pagando, setPagando] = useState<PersonalDebt | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const activas = debts.filter(d => d.activa && d.saldoActual > 0);
+  // Orden del plan: lo que se paga primero arriba (por fecha de próximo pago)
+  const activas = debts.filter(d => d.activa && d.saldoActual > 0)
+    .sort((a, b) => (a.fechaProximoPago || '9999').localeCompare(b.fechaProximoPago || '9999'));
   const saldadas = debts.filter(d => d.activa && d.saldoActual <= 0);
   const totalDeuda = activas.reduce((s, d) => s + d.saldoActual, 0);
   const totalCuotas = activas.reduce((s, d) => s + d.cuotaMinima, 0);
+  // Cuánto pide el plan este mes (cuotas con próximo pago dentro del mes en curso)
+  const mesEnCurso = hoyISO().slice(0, 7);
+  const aPagarEsteMes = activas
+    .filter(d => (d.fechaProximoPago || '').startsWith(mesEnCurso))
+    .reduce((s, d) => s + Math.min(d.cuotaMinima, d.saldoActual), 0);
 
   if (loading) return <div style={{ padding: '2rem', color: '#a1a1aa' }}>Cargando...</div>;
   if (setupError) return <div style={{ padding: '2rem', color: GOLD }}>Activa el modo Personal desde la página Hoy.</div>;
@@ -37,7 +44,7 @@ export const PersonalDeudas: React.FC = () => {
           <div className="resp-grid-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '0.875rem' }}>
             {[
               { label: 'Deuda total', value: fmtK(totalDeuda), color: totalDeuda > 0 ? '#ef4444' : '#10b981' },
-              { label: 'Cuotas mínimas/mes', value: fmtK(totalCuotas), color: GOLD },
+              { label: 'Plan: pagar este mes', value: fmtK(aPagarEsteMes), color: GOLD },
               { label: 'Deudas activas', value: String(activas.length), color: '#fff' },
             ].map(s => (
               <div key={s.label} className="card stat-card" style={{ minHeight: 'auto', padding: '1rem', borderColor: `${GOLD}22` }}>
@@ -46,6 +53,17 @@ export const PersonalDeudas: React.FC = () => {
               </div>
             ))}
           </div>
+
+          {/* Cómo funciona el plan */}
+          {activas.length > 0 && (
+            <div className="card" style={{ padding: '0.9rem 1.1rem', border: `1px solid ${GOLD}33`, background: `${GOLD}0a` }}>
+              <div style={{ fontSize: '0.8rem', color: GOLD, fontWeight: 800, marginBottom: '0.25rem' }}>🎯 Plan B — matar la deuda cara</div>
+              <div style={{ fontSize: '0.75rem', color: '#a0aec0', lineHeight: 1.5 }}>
+                Cada deuda ya tiene su <b style={{ color: '#fff' }}>cuota del plan</b>. Págala con <b style={{ color: '#10b981' }}>💸 Pagar</b> (viene pre-cargada con el valor sugerido).
+                Si pagas <b style={{ color: '#fff' }}>de más</b>, sales antes; si pagas <b style={{ color: '#fff' }}>de menos</b>, las próximas cuotas se recalculan solas. Solo marca y listo.
+              </div>
+            </div>
+          )}
 
           {showAdd && <NuevaDeudaForm onSave={async d => { await addDebt(d); setShowAdd(false); }} onCancel={() => setShowAdd(false)} />}
 
@@ -58,6 +76,13 @@ export const PersonalDeudas: React.FC = () => {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             {activas.map(d => {
               const pagado = d.montoOriginal > 0 ? Math.min(100, ((d.montoOriginal - d.saldoActual) / d.montoOriginal) * 100) : 0;
+              const pagosRestantes = d.cuotaMinima > 0 ? Math.ceil(d.saldoActual / d.cuotaMinima) : 0;
+              let libreMes = '';
+              if (pagosRestantes > 0 && d.fechaProximoPago) {
+                const f = new Date(d.fechaProximoPago + 'T12:00:00');
+                f.setMonth(f.getMonth() + (pagosRestantes - 1));
+                libreMes = f.toLocaleDateString('es-CO', { month: 'short', year: '2-digit' });
+              }
               return (
                 <div key={d.id} className="card" style={{ padding: '1.1rem 1.25rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
@@ -66,10 +91,15 @@ export const PersonalDeudas: React.FC = () => {
                       <div>
                         <div style={{ color: '#fff', fontWeight: 700 }}>{d.acreedor} <span style={{ fontSize: '0.7rem', color: '#52525b', fontWeight: 500 }}>{TIPOS[d.tipo]}</span></div>
                         <div style={{ fontSize: '0.7rem', color: '#52525b' }}>
-                          Cuota mínima {fmt(d.cuotaMinima)}
-                          {d.fechaProximoPago && ` · próximo pago ${new Date(d.fechaProximoPago + 'T12:00:00').toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })}`}
-                          {d.tasaMensual != null && ` · ${d.tasaMensual}% mensual`}
+                          Cuota del plan {fmt(d.cuotaMinima)}
+                          {d.fechaProximoPago && ` · próximo ${new Date(d.fechaProximoPago + 'T12:00:00').toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })}`}
+                          {d.tasaMensual != null && ` · ${d.tasaMensual}%/mes`}
                         </div>
+                        {pagosRestantes > 0 && (
+                          <div style={{ fontSize: '0.7rem', color: '#10b981', fontWeight: 700, marginTop: '0.15rem' }}>
+                            🎯 Libre en {pagosRestantes} {pagosRestantes === 1 ? 'pago' : 'pagos'}{libreMes && ` · ${libreMes}`}
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
@@ -179,7 +209,7 @@ const PagarModal: React.FC<{ debt: PersonalDebt; onClose: () => void; onSave: (v
       <div className="card" style={{ width: '360px', maxWidth: '100%', border: `1px solid ${GOLD}44` }}>
         <h3 style={{ color: '#fff', fontWeight: 800, marginBottom: '0.25rem' }}>💸 Pagar {debt.acreedor}</h3>
         <div style={{ fontSize: '0.72rem', color: '#52525b', marginBottom: '1rem' }}>
-          Saldo actual: {fmt(debt.saldoActual)} · El pago se registra automático en Movimientos (categoría Deudas).
+          Saldo actual: {fmt(debt.saldoActual)} · Viene pre-cargado con la cuota del plan. Pagar de más = sales antes; las próximas cuotas se ajustan solas. Se registra automático en Movimientos.
         </div>
         <label style={lbl}>Valor del pago COP</label>
         <input style={{ ...inp, fontSize: '1.1rem', fontWeight: 700, color: '#10b981' }} inputMode="numeric" autoFocus

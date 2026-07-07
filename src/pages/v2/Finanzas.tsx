@@ -56,7 +56,7 @@ const Proyeccion: React.FC = () => {
 
   const fmtInput = (v: string) => v.replace(/\D/g, '').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 
-  const totalDeudas = debts.filter(d => d.activa).reduce((s, d) => s + d.cuotaMinima, 0);
+  const totalDeudas = debts.filter(d => d.activa && d.saldoActual > 0).reduce((s, d) => s + d.cuotaMinima, 0);
   const totalFijos = totalMensual + totalDeudas;
 
   const confirmed = movements.filter(m => m.estado === 'confirmado');

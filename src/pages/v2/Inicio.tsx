@@ -233,7 +233,7 @@ export const Inicio: React.FC = () => {
       ).reduce((s, m) => s + m.valor, 0)
     : totalRecurring * periodo.meses;
 
-  const totalDeudaMinima = debts.filter(d => d.activa).reduce((s, d) => s + d.cuotaMinima, 0);
+  const totalDeudaMinima = debts.filter(d => d.activa && d.saldoActual > 0).reduce((s, d) => s + d.cuotaMinima, 0);
   const totalCuotas = esDiasExactos
     ? totalDeudaMinima * (periodo.diasExactos! / 30)
     : totalDeudaMinima * periodo.meses;
