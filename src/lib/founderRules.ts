@@ -141,8 +141,11 @@ export function calcFounderStatus(movements: LedgerMovement[], hoy: Date = new D
   const salarioPagadoQuincena = salarioPagadoEn(movements, actual);
   const disponible = salarioQuincenal - gastoQuincena - salarioPagadoQuincena - deuda;
 
-  const montoPago = Math.max(0, salarioQuincenal - gastoQuincena - deuda);
-  const pagado = salarioPagadoQuincena > 0;
+  // Puedes pagarte en VARIOS pedazos dentro de la quincena, cualquier día.
+  // El monto sugerido es lo que te FALTA de tu base (base − ya pagado − gasto − arrastre).
+  // "pagado" (completa) solo cuando ya tomaste toda tu base; hasta entonces puedes seguir.
+  const montoPago = Math.max(0, salarioQuincenal - gastoQuincena - salarioPagadoQuincena - deuda);
+  const pagado = montoPago <= 0;
 
   // Si el régimen aún no arranca, el primer pago es el de la primera quincena del régimen
   const primeraQ = getQuincena(new Date(inicioRegimen + 'T12:00:00'));

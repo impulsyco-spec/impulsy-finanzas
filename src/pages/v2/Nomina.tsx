@@ -192,9 +192,10 @@ export const Nomina: React.FC = () => {
               </div>
               <div style={{ fontSize: '0.66rem', color: '#52525b', marginTop: '0.4rem', lineHeight: 1.6 }}>
                 Sugerido: base {fmt(FOUNDER_RULES.salarioQuincenal)}
+                {founder.salarioPagadoQuincena > 0 && <> − {fmt(founder.salarioPagadoQuincena)} que ya te pagaste esta quincena</>}
                 {yaSacasteQuincena > 0 && <> − {fmt(yaSacasteQuincena)} que ya saliste de Bold</>}
                 {founder.deudaArrastrada > 0 && <> − {fmt(founder.deudaArrastrada)} de arrastre</>}
-                {' '}= <b style={{ color: '#a0aec0' }}>{fmt(montoSugerido)}</b>. Ajústalo si te aprietas más.
+                {' '}= <b style={{ color: '#a0aec0' }}>{fmt(montoSugerido)}</b>. Puedes pagarte en pedazos, cualquier día.
               </div>
             </div>
             {/* Derecha: botón de registro */}
