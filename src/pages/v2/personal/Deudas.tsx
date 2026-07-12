@@ -1,11 +1,156 @@
-import React, { useState } from 'react';
-import { Plus, Trash2, X, CreditCard } from 'lucide-react';
-import { usePersonal, PersonalDebt } from '../../../hooks/usePersonal';
+import React, { useState, useMemo } from 'react';
+import { Plus, Trash2, X, CreditCard, Zap, Target } from 'lucide-react';
+import { usePersonal, PersonalDebt, PERSONAL_CONFIG } from '../../../hooks/usePersonal';
+import { FOUNDER_RULES } from '../../../lib/founderRules';
 import { hoyISO } from '../../../lib/dates';
 import { GOLD, fmt, fmtK, inp, lbl, fmtInput, PersonalHeader, Setup2Banner } from './comunes';
 
 const TIPOS: Record<PersonalDebt['tipo'], string> = {
   tarjeta: '💳 Tarjeta', prestamo: '🏦 Préstamo', credito: '📄 Crédito', otro: '📌 Otro',
+};
+
+// ── Plan de salida (bola de nieve con presupuesto fijo) ───────────────
+const SALARIO_MES = FOUNDER_RULES.salarioQuincenal * 2;      // base mensual garantizada
+const SURVIVAL_MES = PERSONAL_CONFIG.supervivenciaQuincena * 2; // mínimo para vivir/mes
+const MESES_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+
+interface SimSalida {
+  meses: number;
+  alcanza: boolean;
+  libreLabel: string;
+  interesTotal: number;
+  orden: { acreedor: string; muere: number; muereLabel: string; saldo: number; tasa: number }[];
+}
+
+// Simula la avalancha: paga mínimos de todas + tira el excedente a la de mayor
+// interés; cuando una muere, su cuota rueda sola a la siguiente. Devuelve el
+// tiempo total, el orden de muerte y el interés que pagarías en el camino.
+function simularSalida(deudas: PersonalDebt[], presupuestoMes: number): SimSalida {
+  const prio = (a: { tasa: number; saldo: number }, b: { tasa: number; saldo: number }) =>
+    (b.tasa - a.tasa) || (a.saldo - b.saldo); // mayor interés primero; empate → saldo menor
+  const ds = deudas.map(d => ({
+    acreedor: d.acreedor, saldo: d.saldoActual, tasa: (d.tasaMensual ?? 2) / 100,
+    min: Math.min(d.cuotaMinima || 0, d.saldoActual), muere: 0,
+  }));
+  const hoy = new Date();
+  let interesTotal = 0, meses = 0;
+  while (ds.some(d => d.saldo > 1) && meses < 180) {
+    meses++;
+    ds.forEach(d => { if (d.saldo > 0) { const it = d.saldo * d.tasa; interesTotal += it; d.saldo += it; } });
+    let left = presupuestoMes;
+    const vivos = () => ds.filter(d => d.saldo > 1).sort(prio);
+    for (const d of vivos()) { const pay = Math.min(d.min, d.saldo, Math.max(0, left)); d.saldo -= pay; left -= pay; }
+    let guard = 0;
+    while (left > 1 && ds.some(d => d.saldo > 1) && guard++ < 20) {
+      const t = vivos()[0]; const pay = Math.min(left, t.saldo); t.saldo -= pay; left -= pay;
+    }
+    ds.forEach(d => { if (d.saldo <= 1 && d.muere === 0) d.muere = meses; });
+  }
+  const alcanza = ds.every(d => d.saldo <= 1);
+  const fl = new Date(hoy.getFullYear(), hoy.getMonth() + meses, 1);
+  const orden = ds.slice().sort((a, b) => (a.muere || 999) - (b.muere || 999)).map(d => {
+    const fm = new Date(hoy.getFullYear(), hoy.getMonth() + d.muere, 1);
+    return { acreedor: d.acreedor, muere: d.muere, muereLabel: `${MESES_ES[fm.getMonth()]} ${String(fm.getFullYear()).slice(2)}`, saldo: d.saldo, tasa: d.tasa };
+  });
+  return { meses, alcanza, libreLabel: `${MESES_ES[fl.getMonth()]} ${fl.getFullYear()}`, interesTotal, orden };
+}
+
+const PlanSalida: React.FC<{ deudas: PersonalDebt[] }> = ({ deudas }) => {
+  const [presuStr, setPresuStr] = useState(() => localStorage.getItem('planDeudaQ') || '300.000');
+  const presuQ = Number(presuStr.replace(/\./g, '')) || 0;
+  const presuMes = presuQ * 2;
+  const sim = useMemo(() => simularSalida(deudas, presuMes), [deudas, presuMes]);
+  const setPresu = (v: string) => { const f = fmtInput(v); setPresuStr(f); localStorage.setItem('planDeudaQ', f); };
+
+  // Deuda que hay que atacar AHORA con el excedente (mayor interés, saldo > mínimo)
+  const target = useMemo(() =>
+    deudas.slice().sort((a, b) => ((b.tasaMensual ?? 2) - (a.tasaMensual ?? 2)) || (a.saldoActual - b.saldoActual))
+      .find(d => d.saldoActual > (d.cuotaMinima || 0)),
+    [deudas]);
+
+  const paraVivir = SALARIO_MES - SURVIVAL_MES - presuMes; // extra/mes tras deuda + supervivencia
+  const preset = (q: number) => simularSalida(deudas, q * 2).meses;
+
+  if (deudas.length === 0) return null;
+  return (
+    <div className="card" style={{ padding: '1.25rem', border: `1px solid ${GOLD}44`, background: `linear-gradient(135deg, ${GOLD}0c, transparent)` }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.9rem' }}>
+        <Target size={18} style={{ color: GOLD }} />
+        <span style={{ color: '#fff', fontWeight: 800, fontSize: '1rem' }}>Plan de salida de deudas</span>
+      </div>
+
+      {/* Presupuesto fijo por quincena */}
+      <label style={lbl}>Destino fijo cada quincena a deudas</label>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', marginTop: '0.2rem' }}>
+        <span style={{ fontSize: '1.3rem', fontWeight: 800, color: GOLD }}>$</span>
+        <input style={{ ...inp, fontSize: '1.3rem', fontWeight: 800, color: GOLD, marginTop: 0 }} inputMode="numeric"
+          value={presuStr} onChange={e => setPresu(e.target.value)} />
+      </div>
+      <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.6rem', flexWrap: 'wrap' }}>
+        {[250000, 300000, 400000].map(q => (
+          <button key={q} onClick={() => setPresu(String(q))}
+            style={{ flex: 1, minWidth: '90px', padding: '0.5rem', borderRadius: '9px', cursor: 'pointer', fontFamily: 'inherit',
+              border: presuQ === q ? `1px solid ${GOLD}` : '1px solid #262626', background: presuQ === q ? `${GOLD}18` : '#0d0d0d' }}>
+            <div style={{ color: presuQ === q ? GOLD : '#a0aec0', fontWeight: 800, fontSize: '0.82rem' }}>{fmtK(q)}/q</div>
+            <div style={{ color: '#52525b', fontSize: '0.64rem' }}>libre en {preset(q)}m</div>
+          </button>
+        ))}
+      </div>
+
+      {/* Resultado */}
+      <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginTop: '1rem', alignItems: 'flex-end' }}>
+        <div>
+          <div style={{ fontSize: '0.62rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700 }}>Deuda libre en</div>
+          {sim.alcanza ? (
+            <div style={{ fontSize: '2rem', fontWeight: 900, color: '#10b981', lineHeight: 1.05 }}>
+              {sim.meses} <span style={{ fontSize: '1rem', fontWeight: 700 }}>meses</span>
+              <span style={{ fontSize: '0.85rem', color: '#52525b', fontWeight: 600 }}> · {sim.libreLabel}</span>
+            </div>
+          ) : (
+            <div style={{ fontSize: '1rem', fontWeight: 800, color: '#ef4444' }}>Sube el monto — no cubre ni los intereses</div>
+          )}
+        </div>
+      </div>
+
+      {/* Comodidad */}
+      <div style={{ marginTop: '0.75rem', padding: '0.6rem 0.8rem', borderRadius: '9px',
+        background: paraVivir >= 0 ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
+        border: `1px solid ${paraVivir >= 0 ? 'rgba(16,185,129,0.25)' : 'rgba(239,68,68,0.3)'}` }}>
+        <span style={{ fontSize: '0.76rem', color: paraVivir >= 0 ? '#10b981' : '#fca5a5', fontWeight: 600 }}>
+          {paraVivir >= 0
+            ? <>✅ Te sobran <b>{fmt(paraVivir)}/mes</b> para ti, además de comida y transporte. Cómodo.</>
+            : <>⚠️ Te faltan <b>{fmt(-paraVivir)}/mes</b>: este ritmo se come tu supervivencia. Sale de un bono de la empresa, no del salario solo.</>}
+        </span>
+      </div>
+
+      {/* Ataca ahora */}
+      {target && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '0.75rem', padding: '0.7rem 0.85rem', borderRadius: '10px', background: '#0d0d0d', border: '1px solid #7f1d1d55' }}>
+          <Zap size={18} style={{ color: '#ef4444', flexShrink: 0 }} />
+          <div style={{ fontSize: '0.78rem', color: '#e4e4e7', lineHeight: 1.45 }}>
+            <b style={{ color: '#fff' }}>Ataca ahora: {target.acreedor}.</b> Paga los mínimos de todas y tírale TODO tu excedente a esta ({target.tasaMensual}%/mes — la que más te sangra). Cuando muera, ese dinero rueda solo a la siguiente.
+          </div>
+        </div>
+      )}
+
+      {/* Orden de muerte */}
+      <div style={{ marginTop: '0.85rem' }}>
+        <div style={{ fontSize: '0.64rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700, marginBottom: '0.4rem' }}>Orden en que caen 💀</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+          {sim.orden.map((o, i) => (
+            <div key={o.acreedor} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', fontSize: '0.76rem' }}>
+              <span style={{ width: '18px', height: '18px', borderRadius: '50%', background: i === 0 ? '#ef444422' : '#18181b', color: i === 0 ? '#ef4444' : '#71717a', fontWeight: 800, fontSize: '0.66rem', display: 'grid', placeItems: 'center', flexShrink: 0 }}>{i + 1}</span>
+              <span style={{ flex: 1, color: '#a0aec0' }}>{o.acreedor}</span>
+              <span style={{ color: '#10b981', fontWeight: 700 }}>{o.muere > 0 ? o.muereLabel : '—'}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div style={{ fontSize: '0.66rem', color: '#52525b', marginTop: '0.7rem', lineHeight: 1.5 }}>
+        Interés total que pagarías en el camino: <b style={{ color: '#a0aec0' }}>{fmt(Math.round(sim.interesTotal))}</b>. Mientras más subas el monto, menos interés y más rápido sales.
+      </div>
+    </div>
+  );
 };
 
 export const PersonalDeudas: React.FC = () => {
@@ -54,14 +199,13 @@ export const PersonalDeudas: React.FC = () => {
             ))}
           </div>
 
-          {/* Cómo funciona el plan */}
+          {/* Plan de salida interactivo */}
+          <PlanSalida deudas={activas} />
+
+          {/* Cómo pagar */}
           {activas.length > 0 && (
-            <div className="card" style={{ padding: '0.9rem 1.1rem', border: `1px solid ${GOLD}33`, background: `${GOLD}0a` }}>
-              <div style={{ fontSize: '0.8rem', color: GOLD, fontWeight: 800, marginBottom: '0.25rem' }}>🎯 Plan B — matar la deuda cara</div>
-              <div style={{ fontSize: '0.75rem', color: '#a0aec0', lineHeight: 1.5 }}>
-                Cada deuda ya tiene su <b style={{ color: '#fff' }}>cuota del plan</b>. Págala con <b style={{ color: '#10b981' }}>💸 Pagar</b> (viene pre-cargada con el valor sugerido).
-                Si pagas <b style={{ color: '#fff' }}>de más</b>, sales antes; si pagas <b style={{ color: '#fff' }}>de menos</b>, las próximas cuotas se recalculan solas. Solo marca y listo.
-              </div>
+            <div style={{ fontSize: '0.72rem', color: '#52525b', lineHeight: 1.5, padding: '0 0.25rem' }}>
+              💸 Paga cada deuda con su botón <b style={{ color: '#a0aec0' }}>Pagar</b> (viene pre-cargado). Si abonas de más, sales antes y las próximas cuotas se recalculan solas.
             </div>
           )}
 
