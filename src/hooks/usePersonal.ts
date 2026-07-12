@@ -408,6 +408,16 @@ export function usePersonal() {
       valor, categoria: 'Deudas', estado: 'confirmado', fuente: 'manual',
     });
     if (error) throw error;
+    // Método de sobres: el pago SALE del bolsillo "Deudas" (lo que reservaste al
+    // distribuir). Así el disponible libre no se descuenta dos veces. Drena hasta
+    // lo que haya en el sobre; si pagaste de más, el exceso sale del libre.
+    const sobreDeuda = pockets.find(p => p.activo && p.nombre.toLowerCase() === 'deudas');
+    if (sobreDeuda) {
+      const drena = Math.min(valor, Math.max(0, sobreDeuda.saldo));
+      if (drena > 0) await supabase.from('personal_pocket_moves').insert({
+        pocket_id: sobreDeuda.id, valor: -drena, fecha, nota: `Pago ${debt.acreedor}`,
+      });
+    }
     const nuevoSaldo = Math.max(0, debt.saldoActual - valor);
     // Avanza el próximo pago un mes (consumiste la cuota de este ciclo)
     let nuevaFecha = debt.fechaProximoPago;

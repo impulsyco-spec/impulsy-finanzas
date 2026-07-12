@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { PartyPopper, ChevronLeft, ChevronRight, Split } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Split, CreditCard, ShieldCheck, Wallet } from 'lucide-react';
 import { usePersonal, PERSONAL_CONFIG } from '../../../hooks/usePersonal';
 import { getQuincena, Quincena } from '../../../lib/founderRules';
 import { hoyISO } from '../../../lib/dates';
@@ -17,113 +17,82 @@ function quincenaEn(offset: number): Quincena {
   return q;
 }
 
-const MAX_ATRAS = 8; // hasta 8 quincenas hacia atrás
+const MAX_ATRAS = 8;
 
 export const PersonalDistribuir: React.FC = () => {
   const { movements, pockets, pocketMoves, loading, setupError, setup2Error, refetch, addPocket, moverPocket } = usePersonal();
-  const [offset, setOffset] = useState(0);            // 0 = quincena actual
-  const [montoStr, setMontoStr] = useState<string | null>(null); // override manual (simulación)
+  const [offset, setOffset] = useState(0);
+  const [montoStr, setMontoStr] = useState<string | null>(null);       // override manual (simulación)
+  const [deudasStr, setDeudasStr] = useState(() => localStorage.getItem('planDeudaQ') || '300.000');
+  const [ahorroStr, setAhorroStr] = useState(() => localStorage.getItem('planAhorroQ') || '100.000');
   const [aplicando, setAplicando] = useState(false);
 
   const hoyStr = hoyISO();
   const q = useMemo(() => quincenaEn(offset), [offset]);
   const esActual = offset === 0;
 
-  // ── Ingresos REALES de la quincena (se actualiza solo con tus movimientos) ──
+  // Ingreso REAL de la quincena (se actualiza solo con tus movimientos confirmados)
   const ingresosQ = useMemo(() =>
     movements.filter(m => m.naturaleza === 'ingreso' && m.estado === 'confirmado' && m.fecha >= q.inicio && m.fecha <= q.fin),
-    [movements, q]
-  );
+    [movements, q]);
   const ingresoDetectado = ingresosQ.reduce((s, m) => s + m.valor, 0);
   const monto = montoStr === null ? ingresoDetectado : (Number(montoStr.replace(/\./g, '')) || 0);
 
-  // ── Cascada inteligente: obligaciones → supervivencia → excedente ──
-  // 1) Fijos personales que vencen en la quincena (recurrentes esperados)
-  const fijosPendientes = useMemo(() =>
-    movements
-      .filter(m => m.naturaleza === 'egreso' && m.estado === 'esperado' && m.fecha >= q.inicio && m.fecha <= q.fin)
-      .reduce((s, m) => s + m.valor, 0),
-    [movements, q]
-  );
-  // 2) Cuotas de deuda que VENCEN en la quincena (ya proyectadas como esperado, categoría Deudas)
-  const cuotasDeudaQuincena = useMemo(() =>
-    movements.filter(m => m.naturaleza === 'egreso' && m.estado === 'esperado' && m.categoria === 'Deudas' && m.fecha >= q.inicio && m.fecha <= q.fin)
-      .reduce((s, m) => s + m.valor, 0),
-    [movements, q]
-  );
-  const otrosFijos = Math.max(0, fijosPendientes - cuotasDeudaQuincena);
-  const obligaciones = fijosPendientes; // todo lo esperado del periodo (cuotas de deuda + otros fijos)
-  const supervivencia = PERSONAL_CONFIG.supervivenciaQuincena;
-  // 3) Excedente real tras cubrir lo intocable
-  const excedente = monto - obligaciones - supervivencia;
-  const hayDeficit = excedente < 0;
-  const deficit = hayDeficit ? -excedente : 0;
-  // 4) Reparto del excedente: 50% acelera deuda (Libertad), 50% fiesta
-  const aLibertad = hayDeficit ? 0 : Math.round(excedente * PERSONAL_CONFIG.pctLibertadExcedente);
-  const disponibleFiesta = hayDeficit ? 0 : excedente - aLibertad;
+  // Los 3 sobres: Deudas (fijo del plan bola de nieve) → Ahorro (editable) → Para mí (el resto)
+  const deudas = Number(deudasStr.replace(/\./g, '')) || 0;
+  const ahorro = Number(ahorroStr.replace(/\./g, '')) || 0;
+  const paraMi = monto - deudas - ahorro;
+  const survival = PERSONAL_CONFIG.supervivenciaQuincena;
 
-  // ── Reparto a SOBRES por prioridad (lo intocable primero) ──────
-  let _resto = monto;
-  const aObligaciones  = Math.min(obligaciones, _resto);  _resto -= aObligaciones;
-  const aSupervivencia = Math.min(supervivencia, _resto); _resto -= aSupervivencia;
-  const aLibertadFund  = Math.min(aLibertad, _resto);     _resto -= aLibertadFund;
-  const aFiesta = Math.max(0, _resto);
+  const setDeudas = (v: string) => { const f = fmtInput(v); setDeudasStr(f); localStorage.setItem('planDeudaQ', f); };
+  const setAhorro = (v: string) => { const f = fmtInput(v); setAhorroStr(f); localStorage.setItem('planAhorroQ', f); };
 
-  // ¿Ya distribuiste esta quincena? (idempotente por nota `distribuir:<q.id>`)
-  const movesDistribuir = useMemo(() =>
-    pocketMoves.filter(pm => pm.nota?.includes(`distribuir:${q.id}`)),
-    [pocketMoves, q]
-  );
-  const yaDistribuido = movesDistribuir.length > 0;
-  const totalDistribuido = movesDistribuir.reduce((s, pm) => s + pm.valor, 0);
+  // Cuánto de este período ya moviste a cada sobre (idempotente por nota distribuir:<q.id>)
+  const yaEnSobre = (nombre: string) => {
+    const p = pockets.find(pk => pk.nombre.toLowerCase() === nombre.toLowerCase());
+    if (!p) return 0;
+    return pocketMoves.filter(pm => pm.pocketId === p.id && pm.nota?.includes(`distribuir:${q.id}`)).reduce((s, pm) => s + pm.valor, 0);
+  };
+  const yaDeudas = yaEnSobre('Deudas');
+  const yaAhorro = yaEnSobre('Ahorro');
+  const yaDistribuido = yaDeudas > 0 || yaAhorro > 0;
 
-  // ── "Puedes salir el finde con X" — del disponible de fiesta ────
-  const gastadoFiestaQuincena = useMemo(() =>
-    movements
-      .filter(m => m.naturaleza === 'egreso' && m.estado === 'confirmado' && m.categoria === 'Ocio' && m.fecha >= q.inicio && m.fecha <= q.fin)
-      .reduce((s, m) => s + m.valor, 0),
-    [movements, q]
-  );
-  const restanteFiesta = Math.max(0, aFiesta - gastadoFiestaQuincena);
-  const findesRestantes = useMemo(() => {
-    const desde = new Date(Math.max(new Date(hoyStr + 'T12:00:00').getTime(), new Date(q.inicio + 'T12:00:00').getTime()));
-    const fin = new Date(q.fin + 'T12:00:00');
-    let count = 0;
-    for (const d = new Date(desde); d <= fin; d.setDate(d.getDate() + 1)) if (d.getDay() === 6) count++;
-    return Math.max(1, count);
-  }, [q, hoyStr]);
-  const salirFindeCon = Math.round(restanteFiesta / findesRestantes);
-
-  // Crea el bolsillo si no existe y devuelve su id
-  const getOrCreatePocket = async (nombre: string, emoji: string, metaValor: number) => {
+  const getOrCreatePocket = async (nombre: string, emoji: string, esFondo: boolean) => {
     const ex = pockets.find(p => p.nombre.toLowerCase() === nombre.toLowerCase());
     if (ex) return ex.id;
-    await addPocket({ nombre, emoji, metaValor, esFondo: false });
+    await addPocket({ nombre, emoji, metaValor: 0, esFondo });
     const { data } = await supabase.from('personal_pockets').select('id').ilike('nombre', nombre).limit(1).single();
     return data?.id as string | undefined;
   };
 
-  // Reparte el ingreso de la quincena a los sobres (acumulativo, una vez por quincena)
+  // Lleva cada sobre a su monto objetivo (aporta o retira la diferencia). Así puedes
+  // distribuir aunque el sueldo llegue en pedazos: subes el objetivo y se ajusta solo.
   const distribuir = async () => {
-    if (monto <= 0) { alert('No hay ingreso en esta quincena para distribuir. Págate en Nómina primero (o registra el ingreso).'); return; }
-    if (yaDistribuido) { alert('Ya distribuiste esta quincena. Los montos ya están sumados a tus bolsillos.'); return; }
-    if (!confirm(`Distribuir ${fmt(monto)} a tus bolsillos:\n\n🔒 Obligaciones   ${fmt(aObligaciones)}\n🍚 Supervivencia  ${fmt(aSupervivencia)}\n🗽 Libertad       ${fmt(aLibertadFund)}\n🎉 Queda libre    ${fmt(aFiesta)}\n\nSe SUMAN a los bolsillos (se crean la primera vez). Luego cada gasto lo descuentas del bolsillo que elijas.`)) return;
+    if (deudas + ahorro <= 0) { alert('Define al menos cuánto va a Deudas o Ahorro.'); return; }
     setAplicando(true);
     try {
       const nota = `distribuir:${q.id}`;
-      if (aObligaciones > 0)  { const id = await getOrCreatePocket('Obligaciones', '🔒', 0);            if (id) await moverPocket(id, aObligaciones, hoyStr, nota); }
-      if (aSupervivencia > 0) { const id = await getOrCreatePocket('Supervivencia', '🍚', 0);            if (id) await moverPocket(id, aSupervivencia, hoyStr, nota); }
-      if (aLibertadFund > 0)  { const id = await getOrCreatePocket('Libertad', '🗽', 7_710_000);          if (id) await moverPocket(id, aLibertadFund, hoyStr, nota); }
+      const idD = await getOrCreatePocket('Deudas', '💳', false);
+      const deltaD = deudas - yaDeudas;
+      if (idD && Math.abs(deltaD) >= 1) await moverPocket(idD, deltaD, hoyStr, nota);
+      const idA = await getOrCreatePocket('Ahorro', '🛡️', true);
+      const deltaA = ahorro - yaAhorro;
+      if (idA && Math.abs(deltaA) >= 1) await moverPocket(idA, deltaA, hoyStr, nota);
       await refetch();
-    } catch (err: any) {
-      alert('Error: ' + err.message);
-    } finally { setAplicando(false); }
+    } catch (err: any) { alert('Error: ' + err.message); }
+    finally { setAplicando(false); }
   };
 
-  const irA = (nuevoOffset: number) => { setOffset(nuevoOffset); setMontoStr(null); };
+  const irA = (nuevo: number) => { setOffset(nuevo); setMontoStr(null); };
 
   if (loading) return <div style={{ padding: '2rem', color: '#a1a1aa' }}>Cargando...</div>;
   if (setupError) return <div style={{ padding: '2rem', color: GOLD }}>Activa el modo Personal desde la página Hoy.</div>;
+
+  const sobres = [
+    { emoji: '💳', nombre: 'Deudas', desc: 'tu monto fijo del plan bola de nieve — intocable', valor: deudas, color: '#ef4444', editable: setDeudas, str: deudasStr },
+    { emoji: '🛡️', nombre: 'Ahorro', desc: 'tu colchón que crece — súbelo cuando salgas de deudas', valor: ahorro, color: '#06b6d4', editable: setAhorro, str: ahorroStr },
+    { emoji: '😎', nombre: 'Para mí', desc: 'vivir + gustos — esto sí es tuyo, libre', valor: paraMi, color: GOLD, editable: null, str: null },
+  ];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', paddingBottom: '3rem' }}>
@@ -139,9 +108,7 @@ export const PersonalDistribuir: React.FC = () => {
             </button>
             <div style={{ textAlign: 'center' }}>
               <div style={{ color: '#fff', fontWeight: 800, fontSize: '0.95rem' }}>Quincena {q.label}</div>
-              <div style={{ fontSize: '0.64rem', color: esActual ? GOLD : '#52525b', fontWeight: 600 }}>
-                {esActual ? 'EN CURSO' : 'histórico'}
-              </div>
+              <div style={{ fontSize: '0.64rem', color: esActual ? GOLD : '#52525b', fontWeight: 600 }}>{esActual ? 'EN CURSO' : 'histórico'}</div>
             </div>
             <button onClick={() => irA(offset + 1)} disabled={offset >= 0}
               style={{ background: '#0d0d0d', border: '1px solid #1f2937', borderRadius: '8px', padding: '0.4rem 0.6rem', color: offset >= 0 ? '#3f3f46' : GOLD, cursor: offset >= 0 ? 'not-allowed' : 'pointer' }}>
@@ -149,7 +116,7 @@ export const PersonalDistribuir: React.FC = () => {
             </button>
           </div>
 
-          {/* Lo que entró esta quincena (auto desde movimientos) */}
+          {/* Lo que entró */}
           <div className="card" style={{ padding: '1.25rem' }}>
             <label style={lbl}>Te entró esta quincena {montoStr !== null && <span style={{ color: GOLD }}>(simulación)</span>}</label>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', marginTop: '0.2rem' }}>
@@ -158,7 +125,6 @@ export const PersonalDistribuir: React.FC = () => {
                 value={montoStr === null ? fmtInput(String(ingresoDetectado)) : montoStr}
                 onChange={e => setMontoStr(fmtInput(e.target.value))} />
             </div>
-            {/* Desglose de ingresos reales */}
             {ingresosQ.length > 0 ? (
               <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
                 {ingresosQ.map(m => (
@@ -170,7 +136,7 @@ export const PersonalDistribuir: React.FC = () => {
               </div>
             ) : (
               <div style={{ marginTop: '0.6rem', fontSize: '0.7rem', color: '#52525b' }}>
-                Aún no hay ingresos registrados en esta quincena. Cuando llegue un pago o tu salario, aparece aquí solo.
+                Aún no hay ingresos registrados en esta quincena. Págate en Nómina o simula un monto arriba.
               </div>
             )}
             {montoStr !== null && (
@@ -180,96 +146,74 @@ export const PersonalDistribuir: React.FC = () => {
             )}
           </div>
 
-          {/* La cascada */}
+          {/* Los 3 sobres */}
           <div className="card" style={{ padding: '1.25rem' }}>
-            <h3 style={{ color: '#fff', fontWeight: 700, fontSize: '0.9rem', marginBottom: '1rem' }}>Repartición inteligente — lo intocable primero</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              <CascadaFila emoji="🔒" titulo="Obligaciones del periodo"
-                desc={`cuotas de deuda ${fmt(cuotasDeudaQuincena)} + otros fijos ${fmt(otrosFijos)}`}
-                valor={obligaciones} color="#06b6d4" />
-              <CascadaFila emoji="🍚" titulo="Supervivencia"
-                desc="comer y moverte — intocable, antes que la fiesta"
-                valor={supervivencia} color="#f59e0b" />
-
-              {hayDeficit ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.85rem 0.95rem', background: 'rgba(239,68,68,0.1)', borderRadius: '10px', border: '1px solid rgba(239,68,68,0.35)' }}>
-                  <span style={{ fontSize: '1.3rem' }}>🚨</span>
-                  <div style={{ fontSize: '0.74rem', color: '#fca5a5', lineHeight: 1.5 }}>
-                    Te faltan <b style={{ color: '#ef4444' }}>{fmt(deficit)}</b> para cubrir tus obligaciones + supervivencia de esta quincena.
-                    <b style={{ color: '#fff' }}> No apartes a Libertad ni salgas de fiesta</b> — primero asegura lo básico.
+            <h3 style={{ color: '#fff', fontWeight: 700, fontSize: '0.9rem', marginBottom: '0.35rem' }}>A dónde va cada peso</h3>
+            <p style={{ fontSize: '0.72rem', color: '#52525b', marginBottom: '1rem' }}>
+              Primero separas <b style={{ color: '#fca5a5' }}>Deudas</b> (tu plan) y <b style={{ color: '#67e8f9' }}>Ahorro</b>. Lo que queda es <b style={{ color: GOLD }}>tuyo</b>. Los montos son sugeridos — cámbialos como quieras.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+              {sobres.map(s => (
+                <div key={s.nombre} style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', padding: '0.85rem 1rem', background: '#0d0d0d', borderRadius: '11px', border: `1px solid ${s.color}22` }}>
+                  <span style={{ fontSize: '1.5rem' }}>{s.emoji}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ color: s.color, fontWeight: 800, fontSize: '0.92rem' }}>{s.nombre}</div>
+                    <div style={{ fontSize: '0.66rem', color: '#52525b' }}>{s.desc}</div>
                   </div>
-                </div>
-              ) : (
-                <>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0.875rem', borderTop: '1px dashed #2a2a2a', borderBottom: '1px dashed #2a2a2a' }}>
-                    <span style={{ fontSize: '0.72rem', color: '#a0aec0', fontWeight: 700 }}>🟰 Excedente real (lo que de verdad sobra)</span>
-                    <span style={{ fontSize: '1rem', fontWeight: 800, color: '#10b981' }}>{fmtK(excedente)}</span>
-                  </div>
-                  <CascadaFila emoji="🗽" titulo="Libertad (50% del excedente)"
-                    desc="acelera tu salida de deudas"
-                    valor={aLibertad} color="#a855f7" destacado />
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem 0.875rem', background: `${GOLD}11`, borderRadius: '10px', border: `1px solid ${GOLD}33` }}>
-                    <span style={{ fontSize: '1.3rem' }}>🎉</span>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ color: GOLD, fontWeight: 800, fontSize: '0.9rem' }}>Disponible para fiesta/extra</div>
-                      <div style={{ fontSize: '0.65rem', color: '#52525b' }}>solo esto se gasta libre — ya cubriste todo lo importante</div>
+                  {s.editable ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                      <span style={{ color: s.color, fontWeight: 800 }}>$</span>
+                      <input inputMode="numeric" value={s.str!} onChange={e => s.editable!(e.target.value)}
+                        style={{ ...inp, width: '110px', textAlign: 'right', fontWeight: 800, color: s.color, fontSize: '1rem', marginTop: 0 }} />
                     </div>
-                    <div style={{ fontSize: '1.3rem', fontWeight: 900, color: GOLD }}>{fmtK(disponibleFiesta)}</div>
-                  </div>
-                </>
-              )}
+                  ) : (
+                    <div style={{ fontSize: '1.3rem', fontWeight: 900, color: paraMi >= 0 ? s.color : '#ef4444' }}>{fmtK(paraMi)}</div>
+                  )}
+                </div>
+              ))}
             </div>
 
-            {/* Distribuir a sobres — una sola acción que llena los bolsillos */}
+            {/* Avisos */}
+            {paraMi < 0 && (
+              <div style={{ marginTop: '0.75rem', padding: '0.7rem 0.85rem', borderRadius: '10px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.35)', fontSize: '0.74rem', color: '#fca5a5' }}>
+                🚨 Te pasaste: Deudas + Ahorro suman más de lo que entró. Baja alguno o registra el resto de tu ingreso.
+              </div>
+            )}
+            {paraMi >= 0 && paraMi < survival && (
+              <div style={{ marginTop: '0.75rem', padding: '0.7rem 0.85rem', borderRadius: '10px', background: 'rgba(245,158,11,0.08)', border: `1px solid ${GOLD}33`, fontSize: '0.74rem', color: '#fcd34d' }}>
+                ⚠️ "Para mí" queda en {fmt(paraMi)} — menos de lo que sueles necesitar para vivir ({fmt(survival)}). Considera bajar Ahorro esta quincena.
+              </div>
+            )}
+
+            {/* Distribuir */}
             {esActual ? (
-              yaDistribuido ? (
-                <div style={{ marginTop: '1rem', padding: '0.85rem', borderRadius: '10px', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)', textAlign: 'center' }}>
-                  <div style={{ color: '#10b981', fontWeight: 800, fontSize: '0.85rem' }}>✓ Distribuiste esta quincena</div>
-                  <div style={{ fontSize: '0.66rem', color: '#52525b', marginTop: '0.25rem' }}>
-                    {fmt(totalDistribuido)} repartidos a tus bolsillos. Cada gasto descuéntalo del bolsillo que elijas al registrarlo en Movimientos.
+              <>
+                <button onClick={distribuir} disabled={aplicando || (deudas + ahorro) <= 0}
+                  style={{ width: '100%', marginTop: '1rem', padding: '0.95rem', borderRadius: '10px', border: 'none', background: (deudas + ahorro) > 0 ? '#a855f7' : '#1f2937', color: (deudas + ahorro) > 0 ? '#fff' : '#52525b', fontWeight: 800, fontSize: '0.95rem', cursor: (deudas + ahorro) > 0 ? 'pointer' : 'not-allowed', fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
+                  {aplicando ? 'Distribuyendo...' : <><Split size={18} /> {yaDistribuido ? 'Actualizar reparto' : 'Separar a mis sobres'}</>}
+                </button>
+                {yaDistribuido && (
+                  <div style={{ marginTop: '0.6rem', fontSize: '0.68rem', color: '#10b981', textAlign: 'center' }}>
+                    ✓ Ya separaste esta quincena: 💳 {fmt(yaDeudas)} · 🛡️ {fmt(yaAhorro)}. Puedes ajustar y volver a repartir.
                   </div>
+                )}
+                <div style={{ fontSize: '0.64rem', color: '#52525b', textAlign: 'center', marginTop: '0.5rem', lineHeight: 1.6 }}>
+                  Separa 💳 {fmt(deudas)} a Deudas y 🛡️ {fmt(ahorro)} a Ahorro (bolsillos bloqueados). {fmtK(Math.max(0, paraMi))} quedan libres para ti.
                 </div>
-              ) : (
-                <>
-                  <button onClick={distribuir} disabled={aplicando || monto <= 0}
-                    style={{ width: '100%', marginTop: '1rem', padding: '0.95rem', borderRadius: '10px', border: 'none', background: monto > 0 ? '#a855f7' : '#1f2937', color: monto > 0 ? '#fff' : '#52525b', fontWeight: 800, fontSize: '0.95rem', cursor: monto > 0 ? 'pointer' : 'not-allowed', fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
-                    {aplicando ? 'Distribuyendo...' : <><Split size={18} /> Distribuir {fmt(monto)} a mis bolsillos</>}
-                  </button>
-                  <div style={{ fontSize: '0.64rem', color: '#52525b', textAlign: 'center', marginTop: '0.5rem', lineHeight: 1.6 }}>
-                    Crea los bolsillos la primera vez y les SUMA:
-                    <br />🔒 {fmt(aObligaciones)} · 🍚 {fmt(aSupervivencia)} · 🗽 {fmt(aLibertadFund)} · 🎉 {fmt(aFiesta)} libre
-                  </div>
-                </>
-              )
+              </>
             ) : (
               <div style={{ marginTop: '1rem', fontSize: '0.68rem', color: '#52525b', textAlign: 'center' }}>
-                {yaDistribuido ? `En esta quincena distribuiste ${fmt(totalDistribuido)} a tus bolsillos.` : 'En esta quincena no registraste distribución.'}
+                {yaDistribuido ? `En esta quincena separaste 💳 ${fmt(yaDeudas)} · 🛡️ ${fmt(yaAhorro)}.` : 'En esta quincena no registraste distribución.'}
               </div>
             )}
           </div>
 
-          {/* Puedes salir el finde con X — solo quincena en curso y si hay con qué */}
-          {esActual && !hayDeficit && (
-            <div className="card" style={{ padding: '1.5rem', border: `1px solid ${GOLD}33`, background: `linear-gradient(135deg, ${GOLD}0a, transparent)`, textAlign: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
-                <PartyPopper size={16} style={{ color: GOLD }} />
-                <span style={{ fontSize: '0.7rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700 }}>Puedes salir este finde con</span>
-              </div>
-              <div style={{ fontSize: '2.4rem', fontWeight: 900, color: GOLD, lineHeight: 1 }}>{fmtK(salirFindeCon)}</div>
-              <div style={{ fontSize: '0.72rem', color: '#52525b', marginTop: '0.5rem' }}>
-                Te queda {fmt(restanteFiesta)} de fiesta esta quincena para {findesRestantes} finde{findesRestantes > 1 ? 's' : ''}.
-                {gastadoFiestaQuincena > 0 && ` Ya gastaste ${fmt(gastadoFiestaQuincena)}.`}
-              </div>
-              <div style={{ height: '6px', background: '#1a1a1a', borderRadius: '999px', overflow: 'hidden', marginTop: '0.75rem' }}>
-                <div style={{ height: '100%', width: `${disponibleFiesta > 0 ? Math.min(100, (gastadoFiestaQuincena / disponibleFiesta) * 100) : 0}%`, background: gastadoFiestaQuincena >= disponibleFiesta ? '#ef4444' : GOLD, borderRadius: '999px' }} />
-              </div>
-            </div>
-          )}
-
-          {/* Recordatorio de la regla */}
+          {/* Cómo se conecta */}
           <div className="card" style={{ padding: '1rem 1.25rem', border: '1px solid #1f2937' }}>
-            <div style={{ fontSize: '0.72rem', color: '#52525b', lineHeight: 1.7 }}>
-              <b style={{ color: '#a855f7' }}>Por qué Libertad va primero:</b> mientras debas al ~28%, pagar deuda es tu mejor inversión (28% garantizado, sin riesgo). Ese 15% no es un gasto — es comprarte tu libertad. Cuando salgas de deudas, ese mismo bolsillo se vuelve inversión real.
+            <div style={{ display: 'flex', gap: '1.25rem', flexWrap: 'wrap', fontSize: '0.72rem', color: '#52525b', lineHeight: 1.6 }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><CreditCard size={14} style={{ color: '#ef4444' }} /> El sobre <b style={{ color: '#a0aec0' }}>Deudas</b> se vacía solo cuando pagas una cuota en la pestaña Deudas.</span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><ShieldCheck size={14} style={{ color: '#06b6d4' }} /> <b style={{ color: '#a0aec0' }}>Ahorro</b> es tu fondo — no lo toques salvo emergencia.</span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><Wallet size={14} style={{ color: GOLD }} /> <b style={{ color: '#a0aec0' }}>Para mí</b> es tu disponible libre en Hoy.</span>
             </div>
           </div>
         </>
@@ -277,14 +221,3 @@ export const PersonalDistribuir: React.FC = () => {
     </div>
   );
 };
-
-const CascadaFila: React.FC<{ emoji: string; titulo: string; desc: string; valor: number; color: string; destacado?: boolean }> = ({ emoji, titulo, desc, valor, color, destacado }) => (
-  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem 0.875rem', background: destacado ? `${color}11` : '#0d0d0d', borderRadius: '10px', border: destacado ? `1px solid ${color}33` : '1px solid #1a1a1a' }}>
-    <span style={{ fontSize: '1.3rem' }}>{emoji}</span>
-    <div style={{ flex: 1, minWidth: 0 }}>
-      <div style={{ color: destacado ? color : '#e4e4e7', fontWeight: destacado ? 800 : 600, fontSize: '0.85rem' }}>{titulo}</div>
-      <div style={{ fontSize: '0.65rem', color: '#52525b' }}>{desc}</div>
-    </div>
-    <div style={{ fontSize: '1.05rem', fontWeight: 800, color }}>{fmtK(valor)}</div>
-  </div>
-);

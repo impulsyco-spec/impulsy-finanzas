@@ -39,7 +39,7 @@ export const SidebarPersonal: React.FC<Props> = ({ onLogout }) => {
         {link('/personal',             <Home        size={18} />, 'Hoy',               '¿Cómo estoy?', true)}
         {link('/personal/distribuir',  <Split       size={18} />, 'Distribuir',        'A dónde va cada peso')}
         {link('/personal/movimientos', <NotebookPen size={18} />, 'Movimientos',       'Registro diario')}
-        {link('/personal/proyeccion',  <TrendingUp  size={18} />, 'Proyección',        'Fijos y presupuesto')}
+        {link('/personal/proyeccion',  <TrendingUp  size={18} />, '¿Me alcanza?',      'Este mes y los que vienen')}
         {link('/personal/bolsillos',   <Target      size={18} />, 'Bolsillos y Metas', 'Aparta y cumple')}
         {link('/personal/deudas',      <CreditCard  size={18} />, 'Deudas',            'Tarjetas y préstamos')}
         {link('/personal/resumen',     <BarChart2   size={18} />, 'Resumen',           'Tu año personal')}

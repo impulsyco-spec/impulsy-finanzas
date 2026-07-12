@@ -2,9 +2,13 @@ import React, { useState, useMemo } from 'react';
 import { Plus, Trash2, X } from 'lucide-react';
 import { usePersonal, CATS_PERSONAL_EGRESO } from '../../../hooks/usePersonal';
 import { useLedger } from '../../../hooks/useLedger';
-import { calcFounderStatus } from '../../../lib/founderRules';
+import { calcFounderStatus, FOUNDER_RULES } from '../../../lib/founderRules';
 import { hoyISO } from '../../../lib/dates';
-import { GOLD, CAT_COLORS, fmt, fmtK, fmtFecha, inp, lbl, fmtInput, PersonalHeader, Setup2Banner } from './comunes';
+import { GOLD, CAT_COLORS, fmt, fmtK, inp, lbl, fmtInput, PersonalHeader, Setup2Banner } from './comunes';
+
+const SALARIO_MES = FOUNDER_RULES.salarioQuincenal * 2;
+const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+const pad = (n: number) => String(n).padStart(2, '0');
 
 export const PersonalProyeccion: React.FC = () => {
   const { movements, recurring, budgets, loading, setupError, setup2Error, refetch, addRecurring, toggleRecurring, removeRecurring, setBudget, removeBudget } = usePersonal();
@@ -15,26 +19,33 @@ export const PersonalProyeccion: React.FC = () => {
   const [budgetTope, setBudgetTope] = useState('');
 
   const hoyStr = hoyISO();
+  const now = new Date();
   const mesActual = hoyStr.slice(0, 7);
-  const finMes = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()).padStart(2, '0')}`; })();
+  const finMes = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate())}`;
 
   const founder = useMemo(() => calcFounderStatus(ledgerMovs), [ledgerMovs]);
 
-  // ¿Me alcanza el mes? — lo que viene vs lo que queda
   const conf = movements.filter(m => m.estado === 'confirmado');
   const movsMes = conf.filter(m => m.fecha.startsWith(mesActual));
   const gastadoMes = movsMes.filter(m => m.naturaleza === 'egreso').reduce((s, m) => s + m.valor, 0);
   const ingresosMes = movsMes.filter(m => m.naturaleza === 'ingreso').reduce((s, m) => s + m.valor, 0);
-
   const pendientes = movements.filter(m => m.estado === 'esperado');
-  const porPagarMes = pendientes.filter(m => m.naturaleza === 'egreso' && m.fecha <= finMes).reduce((s, m) => s + m.valor, 0);
+  const porPagarMes = pendientes.filter(m => m.naturaleza === 'egreso' && m.fecha <= finMes && m.fecha >= hoyStr).reduce((s, m) => s + m.valor, 0);
   const salarioViene = founder.proximoPago.fecha <= finMes && !founder.proximoPago.pagado ? founder.proximoPago.monto : 0;
   const balanceMes = ingresosMes + salarioViene - gastadoMes - porPagarMes;
 
-  const proximos = pendientes.filter(m => m.fecha >= hoyStr).sort((a, b) => a.fecha.localeCompare(b.fecha)).slice(0, 12);
-  const atrasados = pendientes.filter(m => m.fecha < hoyStr).sort((a, b) => a.fecha.localeCompare(b.fecha));
+  // Runway: mes actual (real) + próximos 2 (proyectado con salario base)
+  const runway = useMemo(() => [0, 1, 2].map(k => {
+    const d = new Date(now.getFullYear(), now.getMonth() + k, 1);
+    const ms = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+    const espIn = pendientes.filter(m => m.naturaleza === 'ingreso' && m.fecha.startsWith(ms)).reduce((s, m) => s + m.valor, 0);
+    const espOut = pendientes.filter(m => m.naturaleza === 'egreso' && m.fecha.startsWith(ms)).reduce((s, m) => s + m.valor, 0);
+    let entra: number, sale: number;
+    if (k === 0) { entra = ingresosMes + salarioViene; sale = gastadoMes + porPagarMes; }
+    else { entra = SALARIO_MES + espIn; sale = espOut; }
+    return { label: `${MESES[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`, entra, sale, queda: entra - sale, esActual: k === 0 };
+  }), [pendientes, ingresosMes, salarioViene, gastadoMes, porPagarMes]);
 
-  // Presupuesto vs real
   const gastoPorCat = useMemo(() => {
     const map: Record<string, number> = {};
     movsMes.filter(m => m.naturaleza === 'egreso').forEach(m => { map[m.categoria || 'Otro'] = (map[m.categoria || 'Otro'] || 0) + m.valor; });
@@ -46,73 +57,38 @@ export const PersonalProyeccion: React.FC = () => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', paddingBottom: '3rem' }}>
-      <PersonalHeader titulo="🔮 Proyección" sub="¿Te alcanza el mes? Fijos, presupuesto y lo que viene." />
+      <PersonalHeader titulo="🧭 ¿Me alcanza?" sub="Mira hacia adelante: cuánto te queda este mes y los que vienen." />
 
-      {/* Balance del mes */}
-      <div className="card" style={{ padding: '1.25rem', borderTop: `3px solid ${balanceMes >= 0 ? '#10b98155' : '#ef444433'}` }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
-          <div>
-            <div style={{ fontSize: '0.65rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700 }}>Balance proyectado del mes</div>
-            <div style={{ fontSize: '2rem', fontWeight: 900, color: balanceMes >= 0 ? '#10b981' : '#ef4444' }}>{fmtK(balanceMes)}</div>
-            <div style={{ fontSize: '0.68rem', color: '#52525b', marginTop: '0.2rem' }}>
-              {balanceMes >= 0 ? 'El mes te alcanza ✓' : 'Ojo: el mes va en rojo — revisa gastos o aplaza algo.'}
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: '1.5rem', fontSize: '0.78rem', flexWrap: 'wrap' }}>
-            <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: '0.62rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700 }}>Recibido</div>
-              <div style={{ color: '#10b981', fontWeight: 800 }}>{fmtK(ingresosMes)}</div>
-            </div>
-            {salarioViene > 0 && (
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: '0.62rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700 }}>Salario por venir</div>
-                <div style={{ color: '#10b981', fontWeight: 800 }}>+{fmtK(salarioViene)}</div>
-              </div>
-            )}
-            <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: '0.62rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700 }}>Gastado</div>
-              <div style={{ color: '#ef4444', fontWeight: 800 }}>−{fmtK(gastadoMes)}</div>
-            </div>
-            <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: '0.62rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700 }}>Por pagar (mes)</div>
-              <div style={{ color: GOLD, fontWeight: 800 }}>−{fmtK(porPagarMes)}</div>
-            </div>
-          </div>
+      {/* Hero — ¿te alcanza este mes? */}
+      <div className="card" style={{ padding: '1.5rem', borderTop: `3px solid ${balanceMes >= 0 ? '#10b98155' : '#ef444455'}` }}>
+        <div style={{ fontSize: '0.65rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700 }}>Te queda este mes (proyectado)</div>
+        <div style={{ fontSize: '2.6rem', fontWeight: 900, color: balanceMes >= 0 ? '#10b981' : '#ef4444', lineHeight: 1.05 }}>{fmtK(balanceMes)}</div>
+        <div style={{ fontSize: '0.72rem', color: '#52525b', marginTop: '0.2rem' }}>
+          {balanceMes >= 0 ? 'El mes te alcanza ✓ — esto queda tras cubrir todo lo proyectado.' : 'Ojo: el mes va en rojo. Baja Ahorro o aplaza algo no urgente.'}
+        </div>
+        <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', marginTop: '1rem', fontSize: '0.78rem' }}>
+          <div><div style={{ fontSize: '0.6rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700 }}>Recibido</div><div style={{ color: '#10b981', fontWeight: 800 }}>{fmtK(ingresosMes)}</div></div>
+          {salarioViene > 0 && <div><div style={{ fontSize: '0.6rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700 }}>Salario por venir</div><div style={{ color: '#10b981', fontWeight: 800 }}>+{fmtK(salarioViene)}</div></div>}
+          <div><div style={{ fontSize: '0.6rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700 }}>Gastado</div><div style={{ color: '#ef4444', fontWeight: 800 }}>−{fmtK(gastadoMes)}</div></div>
+          <div><div style={{ fontSize: '0.6rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700 }}>Por pagar</div><div style={{ color: GOLD, fontWeight: 800 }}>−{fmtK(porPagarMes)}</div></div>
         </div>
       </div>
 
-      {/* Atrasados */}
-      {atrasados.length > 0 && (
-        <div className="card" style={{ padding: '1.1rem', border: '1px solid #ef444433' }}>
-          <div style={{ fontSize: '0.8rem', color: '#ef4444', fontWeight: 700, marginBottom: '0.6rem' }}>
-            ⏰ Atrasados ({atrasados.length}) — confirma o reagenda desde Movimientos
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-            {atrasados.map(m => (
-              <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.4rem 0.6rem', background: '#0a0a0a', borderRadius: '8px' }}>
-                <span style={{ fontSize: '0.78rem', color: '#a0aec0' }}>{fmtFecha(m.fecha)} · {m.descripcion}</span>
-                <span style={{ fontWeight: 700, color: '#ef4444', fontSize: '0.8rem' }}>{fmt(m.valor)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Próximos pagos */}
+      {/* Runway 3 meses */}
       <div className="card" style={{ padding: '1.25rem' }}>
-        <h3 style={{ color: '#fff', fontWeight: 700, fontSize: '0.9rem', marginBottom: '0.75rem' }}>Próximos pagos proyectados</h3>
-        {proximos.length === 0 ? (
-          <div style={{ color: '#52525b', fontSize: '0.82rem', textAlign: 'center', padding: '1.25rem 0' }}>Nada proyectado — agrega tus gastos fijos abajo.</div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-            {proximos.map(m => (
-              <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.4rem 0.6rem', background: '#0a0a0a', borderRadius: '8px' }}>
-                <span style={{ fontSize: '0.78rem', color: '#a0aec0' }}>{fmtFecha(m.fecha)} · {m.descripcion}</span>
-                <span style={{ fontWeight: 700, color: GOLD, fontSize: '0.8rem' }}>{fmt(m.valor)}</span>
+        <h3 style={{ color: '#fff', fontWeight: 700, fontSize: '0.9rem', marginBottom: '0.3rem' }}>Los próximos 3 meses</h3>
+        <p style={{ fontSize: '0.7rem', color: '#52525b', marginBottom: '1rem' }}>Con tu salario base ({fmtK(SALARIO_MES)}/mes) contra tus fijos y cuotas proyectadas. Así ves si el plan de deuda te deja respirar.</p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '0.75rem' }}>
+          {runway.map(r => (
+            <div key={r.label} style={{ padding: '1rem', borderRadius: '12px', background: '#0d0d0d', border: `1px solid ${r.queda >= 0 ? '#10b98133' : '#ef444433'}` }}>
+              <div style={{ fontSize: '0.72rem', color: r.esActual ? GOLD : '#a0aec0', fontWeight: 700, textTransform: 'capitalize' }}>{r.label}{r.esActual && ' · ahora'}</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 900, color: r.queda >= 0 ? '#10b981' : '#ef4444', marginTop: '0.3rem' }}>{fmtK(r.queda)}</div>
+              <div style={{ fontSize: '0.62rem', color: '#52525b', marginTop: '0.35rem', lineHeight: 1.5 }}>
+                entra {fmtK(r.entra)}<br />sale −{fmtK(r.sale)}
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Gastos fijos personales */}
@@ -132,9 +108,7 @@ export const PersonalProyeccion: React.FC = () => {
                 <span style={{ fontSize: '0.7rem', color: '#52525b' }}>{r.categoria}</span>
                 <span style={{ fontSize: '0.68rem', color: '#52525b' }}>{r.duracionMeses} cuotas</span>
                 <span style={{ fontWeight: 700, color: GOLD, fontSize: '0.85rem', minWidth: '80px', textAlign: 'right' }}>{fmt(r.valor)}</span>
-                <button onClick={() => removeRecurring(r.id)} style={{ background: 'none', border: 'none', color: '#52525b', cursor: 'pointer', padding: '0.25rem' }} title="Eliminar">
-                  <Trash2 size={13} />
-                </button>
+                <button onClick={() => removeRecurring(r.id)} style={{ background: 'none', border: 'none', color: '#52525b', cursor: 'pointer', padding: '0.25rem' }} title="Eliminar"><Trash2 size={13} /></button>
               </div>
             ))}
             {showAddRec ? (
@@ -150,13 +124,11 @@ export const PersonalProyeccion: React.FC = () => {
         )}
       </div>
 
-      {/* Presupuesto por categoría — configuración */}
+      {/* Presupuesto por categoría */}
       {setup2Error ? <Setup2Banner onRetry={refetch} /> : (
         <div className="card" style={{ padding: '1.25rem' }}>
-          <h3 style={{ color: '#fff', fontWeight: 700, fontSize: '0.9rem', marginBottom: '0.35rem' }}>Presupuesto mensual por categoría</h3>
-          <p style={{ fontSize: '0.72rem', color: '#52525b', marginBottom: '1rem' }}>
-            Define un tope por categoría. El semáforo aparece en Hoy: 🟢 vas bien · 🟡 +70% · 🔴 tope superado.
-          </p>
+          <h3 style={{ color: '#fff', fontWeight: 700, fontSize: '0.9rem', marginBottom: '0.35rem' }}>Topes de gasto por categoría</h3>
+          <p style={{ fontSize: '0.72rem', color: '#52525b', marginBottom: '1rem' }}>Define un tope por categoría. El semáforo aparece en Hoy: 🟢 vas bien · 🟡 +70% · 🔴 tope superado.</p>
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end', marginBottom: '1rem', flexWrap: 'wrap' }}>
             <div style={{ minWidth: '160px' }}>
               <label style={lbl}>Categoría</label>
@@ -174,9 +146,7 @@ export const PersonalProyeccion: React.FC = () => {
                 if (tope <= 0) { alert('Define el tope.'); return; }
                 await setBudget(budgetCat, tope);
                 setBudgetTope('');
-              }}>
-              Guardar tope
-            </button>
+              }}>Guardar tope</button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
             {budgets.filter(b => b.activo).map((b, i) => {
@@ -190,18 +160,14 @@ export const PersonalProyeccion: React.FC = () => {
                   <div style={{ flex: 1, height: '5px', background: '#1a1a1a', borderRadius: '999px', overflow: 'hidden' }}>
                     <div style={{ height: '100%', width: `${Math.min(100, pct)}%`, background: color, borderRadius: '999px' }} />
                   </div>
-                  <span style={{ fontSize: '0.75rem', color, fontWeight: 700, minWidth: '150px', textAlign: 'right' }}>
-                    {fmtK(gastado)} / {fmtK(b.topeMensual)} ({pct.toFixed(0)}%)
-                  </span>
-                  <button onClick={() => removeBudget(b.id)} style={{ background: 'none', border: 'none', color: '#3f3f46', cursor: 'pointer' }} title="Quitar tope">
-                    <Trash2 size={12} />
-                  </button>
+                  <span style={{ fontSize: '0.75rem', color, fontWeight: 700, minWidth: '150px', textAlign: 'right' }}>{fmtK(gastado)} / {fmtK(b.topeMensual)} ({pct.toFixed(0)}%)</span>
+                  <button onClick={() => removeBudget(b.id)} style={{ background: 'none', border: 'none', color: '#3f3f46', cursor: 'pointer' }} title="Quitar tope"><Trash2 size={12} /></button>
                 </div>
               );
             })}
             {budgets.filter(b => b.activo).length === 0 && (
               <div style={{ color: '#52525b', fontSize: '0.8rem', textAlign: 'center', padding: '0.75rem' }}>
-                Sin topes definidos. Sugerencia: arranca con Ocio y Comida fuera — donde más se escapa la plata.
+                Sin topes definidos. Arranca con Ocio y Comida fuera — donde más se escapa la plata.
               </div>
             )}
           </div>
