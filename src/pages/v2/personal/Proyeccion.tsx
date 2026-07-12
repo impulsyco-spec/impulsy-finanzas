@@ -25,7 +25,7 @@ export const PersonalProyeccion: React.FC = () => {
 
   const founder = useMemo(() => calcFounderStatus(ledgerMovs), [ledgerMovs]);
 
-  const conf = movements.filter(m => m.estado === 'confirmado');
+  const conf = movements.filter(m => m.estado === 'confirmado' && m.categoria !== 'Ajuste');
   const movsMes = conf.filter(m => m.fecha.startsWith(mesActual));
   const gastadoMes = movsMes.filter(m => m.naturaleza === 'egreso').reduce((s, m) => s + m.valor, 0);
   const ingresosMes = movsMes.filter(m => m.naturaleza === 'ingreso').reduce((s, m) => s + m.valor, 0);

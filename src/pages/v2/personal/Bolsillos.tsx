@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Trash2, Lock, X, ArrowLeftRight } from 'lucide-react';
+import { Plus, Trash2, Lock, X, ArrowLeftRight, Scale } from 'lucide-react';
 import { usePersonal, PersonalPocket } from '../../../hooks/usePersonal';
 import { hoyISO } from '../../../lib/dates';
 import { GOLD, fmt, fmtK, inp, lbl, fmtInput, PersonalHeader, Setup2Banner } from './comunes';
@@ -7,10 +7,11 @@ import { GOLD, fmt, fmtK, inp, lbl, fmtInput, PersonalHeader, Setup2Banner } fro
 const EMOJIS = ['🛡️','✈️','🏍️','🏠','💍','🎓','💻','🚗','🎁','📈','🧳','🎯'];
 
 export const PersonalBolsillos: React.FC = () => {
-  const { movements, pockets, loading, setupError, setup2Error, refetch, addPocket, updatePocket, removePocket, moverPocket } = usePersonal();
+  const { movements, pockets, loading, setupError, setup2Error, refetch, addPocket, updatePocket, removePocket, moverPocket, ajustarSaldo } = usePersonal();
   const [showAdd, setShowAdd] = useState(false);
   const [moviendo, setMoviendo] = useState<{ pocket: PersonalPocket; tipo: 'aporte' | 'retiro' } | null>(null);
   const [transfiriendo, setTransfiriendo] = useState(false);
+  const [ajustando, setAjustando] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const conf = movements.filter(m => m.estado === 'confirmado');
@@ -60,6 +61,12 @@ export const PersonalBolsillos: React.FC = () => {
             </div>
             <div style={{ fontSize: '0.7rem', color: '#52525b', textAlign: 'center', marginTop: '0.6rem' }}>
               El dinero apartado sigue en tu cuenta — pero tu cerebro deja de verlo como gastable. Ese es el truco.
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'center', marginTop: '0.6rem' }}>
+              <button onClick={() => setAjustando(true)}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', background: 'transparent', border: '1px solid #2a2a2a', borderRadius: '8px', padding: '0.35rem 0.75rem', color: '#a0aec0', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+                <Scale size={13} /> Ajustar saldo al del banco
+              </button>
             </div>
           </div>
 
@@ -163,6 +170,50 @@ export const PersonalBolsillos: React.FC = () => {
           }}
         />
       )}
+
+      {/* Modal ajustar saldo */}
+      {ajustando && (
+        <AjustarModal saldoActual={saldo} onClose={() => setAjustando(false)}
+          onSave={async real => { await ajustarSaldo(real); setAjustando(false); }} />
+      )}
+    </div>
+  );
+};
+
+const AjustarModal: React.FC<{ saldoActual: number; onClose: () => void; onSave: (real: number) => Promise<void> }> = ({ saldoActual, onClose, onSave }) => {
+  const [valor, setValor] = useState('');
+  const [saving, setSaving] = useState(false);
+  const real = Number(valor.replace(/\./g, '')) || 0;
+  const diff = real - saldoActual;
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: '1rem' }}>
+      <div className="card" style={{ width: '400px', maxWidth: '100%', border: `1px solid ${GOLD}44` }}>
+        <h3 style={{ color: '#fff', fontWeight: 800, marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Scale size={18} style={{ color: GOLD }} /> Ajustar saldo
+        </h3>
+        <div style={{ fontSize: '0.72rem', color: '#52525b', marginBottom: '1rem' }}>
+          El app calcula <b style={{ color: '#a0aec0' }}>{fmt(saldoActual)}</b>. Escribe lo que muestra tu app del banco y creo el ajuste por la diferencia (no cuenta como ingreso ni gasto).
+        </div>
+        <label style={lbl}>Saldo real en el banco COP</label>
+        <input style={{ ...inp, fontSize: '1.1rem', fontWeight: 700, color: GOLD }} inputMode="numeric" autoFocus
+          value={valor} onChange={e => setValor(fmtInput(e.target.value))} placeholder={fmtK(saldoActual)} />
+        {valor !== '' && (
+          <div style={{ fontSize: '0.75rem', marginTop: '0.5rem', color: diff === 0 ? '#52525b' : diff > 0 ? '#10b981' : '#ef4444', fontWeight: 700 }}>
+            {diff === 0 ? 'Ya está cuadrado ✓' : `Ajuste: ${diff > 0 ? '+' : '−'}${fmt(Math.abs(diff))}`}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'flex-end', marginTop: '1.25rem' }}>
+          <button onClick={onClose} className="btn btn-outline">Cancelar</button>
+          <button className="btn btn-primary" disabled={saving || valor === '' || diff === 0}
+            onClick={async () => {
+              setSaving(true);
+              try { await onSave(real); } catch (err: any) { alert('Error: ' + err.message); }
+              finally { setSaving(false); }
+            }}>
+            {saving ? '...' : 'Cuadrar saldo'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 };

@@ -32,7 +32,7 @@ export const PersonalHoy: React.FC = () => {
   const enBolsillos = pockets.filter(p => p.activo).reduce((s, p) => s + p.saldo, 0);
   const libre = saldo - enBolsillos;
 
-  const movsMes = conf.filter(m => m.fecha.startsWith(mesActual));
+  const movsMes = conf.filter(m => m.fecha.startsWith(mesActual) && m.categoria !== 'Ajuste');
   const ingresosMes = movsMes.filter(m => m.naturaleza === 'ingreso').reduce((s, m) => s + m.valor, 0);
   const gastadoMes  = movsMes.filter(m => m.naturaleza === 'egreso').reduce((s, m) => s + m.valor, 0);
   const ahorroMes   = ingresosMes - gastadoMes;

@@ -466,6 +466,24 @@ export function usePersonal() {
     await fetchAll();
   };
 
+  // Cuadra el saldo calculado con el real del banco. Crea un movimiento de ajuste
+  // (categoría 'Ajuste', excluido de ingresos/gastos/ahorro) por la diferencia.
+  const ajustarSaldo = async (saldoReal: number) => {
+    const saldoActual = movements
+      .filter(m => m.estado === 'confirmado')
+      .reduce((s, m) => s + (m.naturaleza === 'ingreso' ? m.valor : -m.valor), 0);
+    const diff = Math.round(saldoReal - saldoActual);
+    if (diff === 0) return;
+    const { error } = await supabase.from('personal_movements').insert({
+      fecha: fechaISO(new Date()),
+      naturaleza: diff > 0 ? 'ingreso' : 'egreso',
+      descripcion: 'Ajuste de saldo',
+      valor: Math.abs(diff), categoria: 'Ajuste', estado: 'confirmado', fuente: 'ajuste',
+    });
+    if (error) throw error;
+    await fetchAll();
+  };
+
   return {
     movements, recurring, pockets, pocketMoves, debts, budgets,
     loading, setupError, setup2Error,
@@ -474,6 +492,6 @@ export function usePersonal() {
     addRecurring, toggleRecurring, removeRecurring,
     addPocket, updatePocket, removePocket, moverPocket,
     addDebt, updateDebt, removeDebt, pagarDeuda, reproyectarDeudas,
-    setBudget, removeBudget,
+    setBudget, removeBudget, ajustarSaldo,
   };
 }

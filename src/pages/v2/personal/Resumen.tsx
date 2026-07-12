@@ -9,7 +9,7 @@ export const PersonalResumen: React.FC = () => {
   const añoActual = new Date().getFullYear();
   const [año, setAño] = useState(añoActual);
 
-  const conf = useMemo(() => movements.filter(m => m.estado === 'confirmado' && m.fecha.startsWith(String(año))), [movements, año]);
+  const conf = useMemo(() => movements.filter(m => m.estado === 'confirmado' && m.categoria !== 'Ajuste' && m.fecha.startsWith(String(año))), [movements, año]);
 
   const meses = useMemo(() => MESES.map((nombre, idx) => {
     const ms = `${año}-${String(idx + 1).padStart(2, '0')}`;

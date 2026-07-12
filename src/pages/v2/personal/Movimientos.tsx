@@ -27,8 +27,8 @@ export const PersonalMovimientos: React.FC = () => {
     }).sort((a, b) => b.fecha.localeCompare(a.fecha)),
   [movements, filtros]);
 
-  const totIng = filtrados.filter(m => m.naturaleza === 'ingreso' && m.estado === 'confirmado').reduce((s, m) => s + m.valor, 0);
-  const totEgr = filtrados.filter(m => m.naturaleza === 'egreso' && m.estado === 'confirmado').reduce((s, m) => s + m.valor, 0);
+  const totIng = filtrados.filter(m => m.naturaleza === 'ingreso' && m.estado === 'confirmado' && m.categoria !== 'Ajuste').reduce((s, m) => s + m.valor, 0);
+  const totEgr = filtrados.filter(m => m.naturaleza === 'egreso' && m.estado === 'confirmado' && m.categoria !== 'Ajuste').reduce((s, m) => s + m.valor, 0);
   // Saldo personal acumulado (todos los confirmados, no solo el período filtrado)
   const saldoPersonal = useMemo(() =>
     movements.filter(m => m.estado === 'confirmado').reduce((s, m) => s + (m.naturaleza === 'ingreso' ? m.valor : -m.valor), 0),
