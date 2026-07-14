@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, Split, CreditCard, ShieldCheck, Wallet } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Split, CreditCard, ShieldCheck, Wallet, PartyPopper } from 'lucide-react';
 import { usePersonal, PERSONAL_CONFIG } from '../../../hooks/usePersonal';
 import { getQuincena, Quincena } from '../../../lib/founderRules';
 import { hoyISO } from '../../../lib/dates';
@@ -43,6 +43,18 @@ export const PersonalDistribuir: React.FC = () => {
   const ahorro = Number(ahorroStr.replace(/\./g, '')) || 0;
   const paraMi = monto - deudas - ahorro;
   const survival = PERSONAL_CONFIG.supervivenciaQuincena;
+
+  // Presupuesto de fin de semana: de "Para mí", reservo lo de vivir la quincena y
+  // el resto lo reparto entre los findes que quedan → cuánto puedo gastar por finde.
+  const findesRestantes = useMemo(() => {
+    const desde = new Date(Math.max(new Date(hoyStr + 'T12:00:00').getTime(), new Date(q.inicio + 'T12:00:00').getTime()));
+    const fin = new Date(q.fin + 'T12:00:00');
+    let n = 0;
+    for (const d = new Date(desde); d <= fin; d.setDate(d.getDate() + 1)) if (d.getDay() === 6) n++;
+    return Math.max(1, n);
+  }, [q, hoyStr]);
+  const paraGustos = Math.max(0, paraMi - survival);
+  const gastoPorFinde = Math.round(paraGustos / findesRestantes);
 
   const setDeudas = (v: string) => { const f = fmtInput(v); setDeudasStr(f); localStorage.setItem('planDeudaQ', f); };
   const setAhorro = (v: string) => { const f = fmtInput(v); setAhorroStr(f); localStorage.setItem('planAhorroQ', f); };
@@ -207,6 +219,22 @@ export const PersonalDistribuir: React.FC = () => {
               </div>
             )}
           </div>
+
+          {/* Presupuesto de fin de semana */}
+          {esActual && monto > 0 && paraMi >= 0 && (
+            <div className="card" style={{ padding: '1.5rem', border: `1px solid ${GOLD}44`, background: `linear-gradient(135deg, ${GOLD}0e, transparent)`, textAlign: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', marginBottom: '0.3rem' }}>
+                <PartyPopper size={16} style={{ color: GOLD }} />
+                <span style={{ fontSize: '0.68rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700 }}>Puedes gastar este fin de semana</span>
+              </div>
+              <div style={{ fontSize: '2.6rem', fontWeight: 900, color: gastoPorFinde > 0 ? GOLD : '#52525b', lineHeight: 1 }}>{fmtK(gastoPorFinde)}</div>
+              <div style={{ fontSize: '0.72rem', color: '#52525b', marginTop: '0.5rem', lineHeight: 1.5 }}>
+                {gastoPorFinde > 0
+                  ? <>De tus <b style={{ color: GOLD }}>{fmtK(paraMi)}</b> para ti, reservé <b>{fmtK(survival)}</b> para vivir la quincena. El resto ({fmtK(paraGustos)}) repartido en {findesRestantes} finde{findesRestantes > 1 ? 's' : ''} que {findesRestantes > 1 ? 'quedan' : 'queda'}.</>
+                  : <>Esta quincena "Para mí" apenas cubre lo de vivir ({fmtK(survival)}). Sin extra para fiesta — semana tranquila.</>}
+              </div>
+            </div>
+          )}
 
           {/* Cómo se conecta */}
           <div className="card" style={{ padding: '1rem 1.25rem', border: '1px solid #1f2937' }}>
