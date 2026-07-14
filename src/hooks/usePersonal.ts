@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { fechaISO } from '../lib/dates';
 import { LedgerMovement } from '../types';
-import { esSalarioFundador } from '../lib/founderRules';
+import { esPagoFundador, esBonoFundador } from '../lib/founderRules';
 
 // ── Configuración del modo Personal ─────────────────────────────
 // Calibrada con Agustín (16 jun 2026): priorizar inversión/deuda, ocio medido.
@@ -227,8 +227,9 @@ export function usePersonal() {
     // Salvaguarda: si el ledger viene vacío (probable error de carga), NO reconciliar
     // para no borrar espejos válidos por accidente.
     if (ledgerMovements.length === 0) return false;
-    const salarios = ledgerMovements.filter(m => esSalarioFundador(m) && m.estado === 'confirmado');
-    const fuentesValidas = new Set(salarios.map(m => `salario:${m.id}`));
+    // Espeja TODO pago formal al fundador: salario base y bono.
+    const pagos = ledgerMovements.filter(m => esPagoFundador(m) && m.estado === 'confirmado');
+    const fuentesValidas = new Set(pagos.map(m => `salario:${m.id}`));
 
     const { data: espejosData, error } = await supabase
       .from('personal_movements').select('id,fuente').like('fuente', 'salario:%');
@@ -236,15 +237,15 @@ export function usePersonal() {
     const espejos = espejosData || [];
     const yaEspejadas = new Set(espejos.map(e => e.fuente));
 
-    // 1) Crear los espejos que faltan
-    const nuevos = salarios
+    // 1) Crear los espejos que faltan (bono → categoría Bonificación)
+    const nuevos = pagos
       .filter(m => !yaEspejadas.has(`salario:${m.id}`))
       .map(m => ({
         fecha: m.fecha,
         naturaleza: 'ingreso',
-        descripcion: m.descripcion || 'Salario Impulsy',
+        descripcion: m.descripcion || (esBonoFundador(m) ? 'Bono Impulsy' : 'Salario Impulsy'),
         valor: m.valor,
-        categoria: 'Salario Impulsy',
+        categoria: esBonoFundador(m) ? 'Bonificación' : 'Salario Impulsy',
         estado: 'confirmado',
         fuente: `salario:${m.id}`,
       }));

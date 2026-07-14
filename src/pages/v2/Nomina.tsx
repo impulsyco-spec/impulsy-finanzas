@@ -25,6 +25,7 @@ export const Nomina: React.FC = () => {
   const [pagando, setPagando] = useState<'base' | 'bono' | null>(null);
   // Monto a registrar. null = aún no lo tocó → usa el sugerido por el motor.
   const [montoStr, setMontoStr] = useState<string | null>(null);
+  const [bonoStr, setBonoStr] = useState<string | null>(null);
 
   const founder = useMemo(() => calcFounderStatus(movements), [movements]);
   const bono    = useMemo(() => calcBonoMes(movements), [movements]);
@@ -53,6 +54,10 @@ export const Nomina: React.FC = () => {
   const montoRegistrar = montoStr === null ? montoSugerido : (Number(montoStr.replace(/\./g, '')) || 0);
   const yaSacasteQuincena = founder.gastoQuincena;
 
+  // Bono editable: sugerido = lo que queda del bono del mes (rango recomendado 0–pendiente)
+  const bonoRegistrar = bonoStr === null ? bono.pendiente : (Number(bonoStr.replace(/\./g, '')) || 0);
+  const bonoExcede = bonoRegistrar > bono.pendiente;
+
   // Historial de pagos al fundador (base + bono)
   const historial = movements
     .filter(m => m.estado === 'confirmado' && (m.notas?.startsWith('founder:salario') || m.notas?.startsWith('founder:bono')))
@@ -62,8 +67,11 @@ export const Nomina: React.FC = () => {
   const registrarPago = async (tipo: 'base' | 'bono', monto: number, nota: string, descripcion: string) => {
     // Aviso de responsabilidad si te pagas FUERA de tu día (15 / fin de mes)
     const esAdelanto = tipo === 'base' && hoyStr < founder.proximoPago.fecha;
+    const bonoAlto = tipo === 'bono' && monto > bono.pendiente;
     const aviso = esAdelanto
       ? `⚠️ ESTÁS ADELANTANDO TU PAGO\nHoy (${fmtFecha(hoyStr)}) no es tu día de nómina (${fmtFecha(founder.proximoPago.fecha)}).\nHazlo SOLO si es una urgencia real: adelantarte reduce tu colchón y desordena el ciclo.\n\n`
+      : bonoAlto
+      ? `⚠️ BONO POR ENCIMA DE LO RECOMENDADO\nTe estás pagando ${fmt(monto)} de bono, pero lo que generó la empresa este mes es ${fmt(bono.pendiente)}.\nEl exceso reduce tu reserva. Hazlo solo si sabes lo que haces.\n\n`
       : '';
     if (!confirm(`${aviso}Registrar ${descripcion} por ${fmt(monto)}?\n\n• Sale de Bold (empresa)\n• Entra como ingreso en tu mundo Personal\n\nRecuerda hacer la transferencia real por este mismo valor.`)) return;
     setPagando(tipo);
@@ -107,6 +115,7 @@ export const Nomina: React.FC = () => {
         }
       }
       setMontoStr(null); // vuelve al sugerido para la próxima quincena
+      setBonoStr(null);
       refetch();
     } catch (err: any) {
       alert('Error: ' + err.message);
@@ -259,16 +268,26 @@ export const Nomina: React.FC = () => {
             {bono.califica && bono.pagado > 0 && <div style={{ fontSize: '0.7rem', color: '#10b981', marginTop: '0.2rem' }}>Ya cobraste {fmt(bono.pagado)} de bono este mes.</div>}
           </div>
           {bonoDisponiblePagar && (
-            <div style={{ textAlign: 'right' }}>
-              <button onClick={() => registrarPago('bono', bono.pendiente, `founder:bono:${bono.mes}`, `Bono ${bono.mesLabel}`)}
-                disabled={pagando === 'bono'}
-                style={{ padding: '0.75rem 1.25rem', borderRadius: '10px', border: 'none', background: '#a855f7', color: '#fff', fontWeight: 800, fontSize: '0.85rem', cursor: 'pointer', fontFamily: 'inherit' }}>
-                {pagando === 'bono' ? '...' : `🎁 Registrar ${fmt(bono.pendiente)}`}
+            <div style={{ textAlign: 'right', minWidth: '210px' }}>
+              <label style={{ fontSize: '0.6rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700, display: 'block' }}>Cuánto bono registrar</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', justifyContent: 'flex-end', marginTop: '0.2rem' }}>
+                <span style={{ fontSize: '1.3rem', fontWeight: 900, color: '#a855f7' }}>$</span>
+                <input inputMode="numeric"
+                  value={bonoStr === null ? fmtMiles(bono.pendiente) : bonoStr}
+                  onChange={e => setBonoStr(fmtMiles(e.target.value))}
+                  style={{ width: '150px', background: '#0d0d0d', border: `1px solid ${bonoExcede ? '#f59e0b' : '#1f2937'}`, borderRadius: '8px', padding: '0.4rem 0.6rem', color: '#fff', fontSize: '1.3rem', fontWeight: 900, fontFamily: 'inherit', textAlign: 'right' }} />
+              </div>
+              <button onClick={() => registrarPago('bono', bonoRegistrar, `founder:bono:${bono.mes}`, `Bono ${bono.mesLabel}`)}
+                disabled={pagando === 'bono' || bonoRegistrar <= 0}
+                style={{ marginTop: '0.5rem', padding: '0.7rem 1.25rem', borderRadius: '10px', border: 'none', background: bonoRegistrar > 0 ? '#a855f7' : '#1f2937', color: bonoRegistrar > 0 ? '#fff' : '#52525b', fontWeight: 800, fontSize: '0.85rem', cursor: bonoRegistrar > 0 ? 'pointer' : 'not-allowed', fontFamily: 'inherit' }}>
+                {pagando === 'bono' ? '...' : `🎁 Registrar ${fmt(bonoRegistrar)}`}
               </button>
-              <div style={{ fontSize: '0.64rem', color: bonoAntesDeCierre ? '#f59e0b' : '#52525b', marginTop: '0.35rem', maxWidth: '170px' }}>
-                {bonoAntesDeCierre
-                  ? `Ojo: el mes cierra el ${fmtFecha(bono.cierreMes)}. La utilidad aún puede cambiar — ideal esperar al cierre.`
-                  : 'Mes cerrado — utilidad definitiva ✓'}
+              <div style={{ fontSize: '0.64rem', color: bonoExcede ? '#f59e0b' : '#52525b', marginTop: '0.35rem', maxWidth: '200px', marginLeft: 'auto' }}>
+                {bonoExcede
+                  ? `Máximo recomendado: ${fmt(bono.pendiente)} (30% de la utilidad). Puedes cobrar eso o menos.`
+                  : bonoAntesDeCierre
+                  ? `Recomendado hasta ${fmt(bono.pendiente)}. Ojo: el mes cierra el ${fmtFecha(bono.cierreMes)}, la utilidad puede cambiar.`
+                  : `Recomendado hasta ${fmt(bono.pendiente)}. Puedes pagártelo en pedazos.`}
               </div>
             </div>
           )}

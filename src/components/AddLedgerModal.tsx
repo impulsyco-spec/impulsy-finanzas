@@ -142,6 +142,12 @@ export const AddLedgerModal: React.FC<Props> = ({
     setSaving(true);
     try {
       const valorNum = Number(String(form.valor).replace(/\./g, ''));
+      // Bono del fundador: se marca con nota founder:bono:<YYYY-MM> para que Nómina
+      // lo cuente como bono y el puente lo espeje a Personal como Bonificación.
+      const esBonoFundador = form.tipo === 'retiro_fundador' && form.tipo_retiro === 'bono_fundador';
+      const notasFinal = esBonoFundador
+        ? `founder:bono:${form.fecha.slice(0, 7)}`
+        : (form.notas.trim() || null);
       const base = {
         fecha: form.fecha,
         tipo_movimiento: form.tipo,
@@ -155,7 +161,7 @@ export const AddLedgerModal: React.FC<Props> = ({
         team_member_id: form.team_member_id || null,
         tercero: form.tercero.trim() || null,
         fecha_vencimiento: (form.estado === 'esperado' || form.estado === 'facturado') ? (form.fecha_vencimiento || null) : null,
-        notas: form.notas.trim() || null,
+        notas: notasFinal,
         personal_flag: form.personal_flag,
         tipo_retiro: form.tipo === 'retiro_fundador' ? (form.tipo_retiro || null) : null,
         mes,
@@ -458,10 +464,16 @@ export const AddLedgerModal: React.FC<Props> = ({
               <select style={inp} value={form.tipo_retiro} onChange={e => set('tipo_retiro', e.target.value)}>
                 <option value="">Seleccionar</option>
                 <option value="sueldo_aprobado">Sueldo del mes</option>
+                <option value="bono_fundador">🎁 Bono del fundador (30% utilidad)</option>
                 <option value="anticipo_sueldo">Anticipo de sueldo</option>
                 <option value="retiro_extraordinario">Retiro extraordinario</option>
                 <option value="gasto_personal_empresa">Gasto personal en caja empresa</option>
               </select>
+              {form.tipo_retiro === 'bono_fundador' && (
+                <div style={{ marginTop: '0.3rem', fontSize: '0.72rem', color: '#a855f7' }}>
+                  Contará como bono en Nómina y entrará como Bonificación en tu mundo Personal.
+                </div>
+              )}
             </div>
           )}
 

@@ -45,18 +45,28 @@ function quincenaSiguiente(q: Quincena): Quincena {
   return getQuincena(next);
 }
 
-// El salario formal del nuevo régimen lleva marcador en notas; también se
-// reconoce el retiro_fundador marcado como sueldo aprobado.
+// Salario BASE del régimen: marcador en notas, o retiro marcado sueldo aprobado.
+// El bono NO es base (aunque se marque sueldo_aprobado) — se excluye acá.
 export const esSalarioFundador = (m: LedgerMovement) =>
   m.notas?.startsWith('founder:salario') === true ||
-  (m.tipoMovimiento === 'retiro_fundador' && m.tipoRetiro === 'sueldo_aprobado');
+  (m.tipoMovimiento === 'retiro_fundador' && m.tipoRetiro === 'sueldo_aprobado' &&
+   m.notas?.startsWith('founder:bono') !== true);
 
-// Gasto personal = todo dinero que sale hacia Agustín por fuera del salario,
-// sin importar cómo se marque (checkbox, categoría o retiro no-salario).
+// Bono del fundador (30% de la utilidad) — separado de la base.
+export const esBonoFundador = (m: LedgerMovement) =>
+  m.notas?.startsWith('founder:bono') === true ||
+  (m.tipoMovimiento === 'retiro_fundador' && m.tipoRetiro === 'bono_fundador');
+
+// Cualquier pago FORMAL al fundador (base o bono): se espeja a Personal y NO
+// cuenta como gasto personal (no consume tu base quincenal).
+export const esPagoFundador = (m: LedgerMovement) => esSalarioFundador(m) || esBonoFundador(m);
+
+// Gasto personal = dinero hacia Agustín por fuera de su salario/bono formal,
+// sin importar cómo se marque (checkbox, categoría o retiro no-nómina).
 export const esGastoPersonal = (m: LedgerMovement) =>
   m.naturaleza === 'egreso' &&
   m.estado === 'confirmado' &&
-  !esSalarioFundador(m) &&
+  !esPagoFundador(m) &&
   (m.personalFlag || m.categoria === 'Personal' || m.tipoMovimiento === 'retiro_fundador');
 
 const sumaEntre = (movs: LedgerMovement[], filtro: (m: LedgerMovement) => boolean, desde: string, hasta: string) =>
@@ -65,7 +75,7 @@ const sumaEntre = (movs: LedgerMovement[], filtro: (m: LedgerMovement) => boolea
 const salarioPagadoEn = (movs: LedgerMovement[], q: Quincena) =>
   movs
     .filter(m => m.estado === 'confirmado' && esSalarioFundador(m) &&
-      (m.notas === `founder:salario:${q.id}` || (!m.notas?.startsWith('founder:salario') && m.fecha >= q.inicio && m.fecha <= q.fin)))
+      (m.notas === `founder:salario:${q.id}` || (!m.notas?.startsWith('founder:') && m.fecha >= q.inicio && m.fecha <= q.fin)))
     .reduce((s, m) => s + m.valor, 0);
 
 export interface FounderStatus {
