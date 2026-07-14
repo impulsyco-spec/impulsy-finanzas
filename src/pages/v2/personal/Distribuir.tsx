@@ -23,7 +23,7 @@ export const PersonalDistribuir: React.FC = () => {
   const { movements, pockets, pocketMoves, loading, setupError, setup2Error, refetch, addPocket, moverPocket } = usePersonal();
   const [offset, setOffset] = useState(0);
   const [montoStr, setMontoStr] = useState<string | null>(null);       // override manual (simulación)
-  const [deudasStr, setDeudasStr] = useState(() => localStorage.getItem('planDeudaQ') || '300.000');
+  const [deudasStr, setDeudasStr] = useState(() => localStorage.getItem('deudaSobreQ') || fmtInput(String(PERSONAL_CONFIG.presupuestoDeudaQuincena)));
   const [ahorroStr, setAhorroStr] = useState(() => localStorage.getItem('planAhorroQ') || '100.000');
   const [aplicando, setAplicando] = useState(false);
 
@@ -56,7 +56,7 @@ export const PersonalDistribuir: React.FC = () => {
   const paraGustos = Math.max(0, paraMi - survival);
   const gastoPorFinde = Math.round(paraGustos / findesRestantes);
 
-  const setDeudas = (v: string) => { const f = fmtInput(v); setDeudasStr(f); localStorage.setItem('planDeudaQ', f); };
+  const setDeudas = (v: string) => { const f = fmtInput(v); setDeudasStr(f); localStorage.setItem('deudaSobreQ', f); };
   const setAhorro = (v: string) => { const f = fmtInput(v); setAhorroStr(f); localStorage.setItem('planAhorroQ', f); };
 
   // Cuánto de este período ya moviste a cada sobre (idempotente por nota distribuir:<q.id>)

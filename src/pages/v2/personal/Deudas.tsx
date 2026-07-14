@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Plus, Trash2, X, CreditCard, Zap, Target } from 'lucide-react';
 import { usePersonal, PersonalDebt, PERSONAL_CONFIG } from '../../../hooks/usePersonal';
-import { FOUNDER_RULES } from '../../../lib/founderRules';
+import { simularSnowball, PlanSnowball, DeudaSim } from '../../../lib/snowball';
 import { hoyISO } from '../../../lib/dates';
 import { GOLD, fmt, fmtK, inp, lbl, fmtInput, PersonalHeader, Setup2Banner } from './comunes';
 
@@ -9,118 +9,33 @@ const TIPOS: Record<PersonalDebt['tipo'], string> = {
   tarjeta: '💳 Tarjeta', prestamo: '🏦 Préstamo', credito: '📄 Crédito', otro: '📌 Otro',
 };
 
-// ── Plan de salida (bola de nieve con presupuesto fijo) ───────────────
-const SALARIO_MES = FOUNDER_RULES.salarioQuincenal * 2;      // base mensual garantizada
-const SURVIVAL_MES = PERSONAL_CONFIG.supervivenciaQuincena * 2; // mínimo para vivir/mes
-const MESES_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+const PRESU_QUINCENA = PERSONAL_CONFIG.presupuestoDeudaQuincena; // fijo e inviolable
+const PRESU_MES = PRESU_QUINCENA * 2;
+const toSim = (d: PersonalDebt): DeudaSim => ({
+  id: d.id, acreedor: d.acreedor, saldoActual: d.saldoActual,
+  tasaMensual: d.tasaMensual, cuotaMinima: d.cuotaMinima, fechaProximoPago: d.fechaProximoPago,
+});
 
-interface SimSalida {
-  meses: number;
-  alcanza: boolean;
-  libreLabel: string;
-  interesTotal: number;
-  orden: { acreedor: string; muere: number; muereLabel: string; saldo: number; tasa: number }[];
-}
-
-// Simula la avalancha: paga mínimos de todas + tira el excedente a la de mayor
-// interés; cuando una muere, su cuota rueda sola a la siguiente. Devuelve el
-// tiempo total, el orden de muerte y el interés que pagarías en el camino.
-function simularSalida(deudas: PersonalDebt[], presupuestoMes: number): SimSalida {
-  const prio = (a: { tasa: number; saldo: number }, b: { tasa: number; saldo: number }) =>
-    (b.tasa - a.tasa) || (a.saldo - b.saldo); // mayor interés primero; empate → saldo menor
-  const ds = deudas.map(d => ({
-    acreedor: d.acreedor, saldo: d.saldoActual, tasa: (d.tasaMensual ?? 2) / 100,
-    min: Math.min(d.cuotaMinima || 0, d.saldoActual), muere: 0,
-  }));
-  const hoy = new Date();
-  let interesTotal = 0, meses = 0;
-  while (ds.some(d => d.saldo > 1) && meses < 180) {
-    meses++;
-    ds.forEach(d => { if (d.saldo > 0) { const it = d.saldo * d.tasa; interesTotal += it; d.saldo += it; } });
-    let left = presupuestoMes;
-    const vivos = () => ds.filter(d => d.saldo > 1).sort(prio);
-    for (const d of vivos()) { const pay = Math.min(d.min, d.saldo, Math.max(0, left)); d.saldo -= pay; left -= pay; }
-    let guard = 0;
-    while (left > 1 && ds.some(d => d.saldo > 1) && guard++ < 20) {
-      const t = vivos()[0]; const pay = Math.min(left, t.saldo); t.saldo -= pay; left -= pay;
-    }
-    ds.forEach(d => { if (d.saldo <= 1 && d.muere === 0) d.muere = meses; });
-  }
-  const alcanza = ds.every(d => d.saldo <= 1);
-  const fl = new Date(hoy.getFullYear(), hoy.getMonth() + meses, 1);
-  const orden = ds.slice().sort((a, b) => (a.muere || 999) - (b.muere || 999)).map(d => {
-    const fm = new Date(hoy.getFullYear(), hoy.getMonth() + d.muere, 1);
-    return { acreedor: d.acreedor, muere: d.muere, muereLabel: `${MESES_ES[fm.getMonth()]} ${String(fm.getFullYear()).slice(2)}`, saldo: d.saldo, tasa: d.tasa };
-  });
-  return { meses, alcanza, libreLabel: `${MESES_ES[fl.getMonth()]} ${fl.getFullYear()}`, interesTotal, orden };
-}
-
-const PlanSalida: React.FC<{ deudas: PersonalDebt[] }> = ({ deudas }) => {
-  const [presuStr, setPresuStr] = useState(() => localStorage.getItem('planDeudaQ') || '300.000');
-  const presuQ = Number(presuStr.replace(/\./g, '')) || 0;
-  const presuMes = presuQ * 2;
-  const sim = useMemo(() => simularSalida(deudas, presuMes), [deudas, presuMes]);
-  const setPresu = (v: string) => { const f = fmtInput(v); setPresuStr(f); localStorage.setItem('planDeudaQ', f); };
-
-  // Deuda que hay que atacar AHORA con el excedente (mayor interés, saldo > mínimo)
-  const target = useMemo(() =>
-    deudas.slice().sort((a, b) => ((b.tasaMensual ?? 2) - (a.tasaMensual ?? 2)) || (a.saldoActual - b.saldoActual))
-      .find(d => d.saldoActual > (d.cuotaMinima || 0)),
-    [deudas]);
-
-  const paraVivir = SALARIO_MES - SURVIVAL_MES - presuMes; // extra/mes tras deuda + supervivencia
-  const preset = (q: number) => simularSalida(deudas, q * 2).meses;
-
-  if (deudas.length === 0) return null;
+// ── Resumen del plan (bola de nieve con presupuesto FIJO e inviolable) ──
+// Solo lectura: los montos exactos por mes viven en los movimientos proyectados.
+const PlanResumen: React.FC<{ plan: PlanSnowball; target?: PersonalDebt }> = ({ plan, target }) => {
+  if (plan.movimientos.length === 0) return null;
   return (
     <div className="card" style={{ padding: '1.25rem', border: `1px solid ${GOLD}44`, background: `linear-gradient(135deg, ${GOLD}0c, transparent)` }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.9rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.9rem', flexWrap: 'wrap' }}>
         <Target size={18} style={{ color: GOLD }} />
-        <span style={{ color: '#fff', fontWeight: 800, fontSize: '1rem' }}>Plan de salida de deudas</span>
-      </div>
-
-      {/* Presupuesto fijo por quincena */}
-      <label style={lbl}>Destino fijo cada quincena a deudas</label>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', marginTop: '0.2rem' }}>
-        <span style={{ fontSize: '1.3rem', fontWeight: 800, color: GOLD }}>$</span>
-        <input style={{ ...inp, fontSize: '1.3rem', fontWeight: 800, color: GOLD, marginTop: 0 }} inputMode="numeric"
-          value={presuStr} onChange={e => setPresu(e.target.value)} />
-      </div>
-      <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.6rem', flexWrap: 'wrap' }}>
-        {[250000, 300000, 400000].map(q => (
-          <button key={q} onClick={() => setPresu(String(q))}
-            style={{ flex: 1, minWidth: '90px', padding: '0.5rem', borderRadius: '9px', cursor: 'pointer', fontFamily: 'inherit',
-              border: presuQ === q ? `1px solid ${GOLD}` : '1px solid #262626', background: presuQ === q ? `${GOLD}18` : '#0d0d0d' }}>
-            <div style={{ color: presuQ === q ? GOLD : '#a0aec0', fontWeight: 800, fontSize: '0.82rem' }}>{fmtK(q)}/q</div>
-            <div style={{ color: '#52525b', fontSize: '0.64rem' }}>libre en {preset(q)}m</div>
-          </button>
-        ))}
-      </div>
-
-      {/* Resultado */}
-      <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginTop: '1rem', alignItems: 'flex-end' }}>
-        <div>
-          <div style={{ fontSize: '0.62rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700 }}>Deuda libre en</div>
-          {sim.alcanza ? (
-            <div style={{ fontSize: '2rem', fontWeight: 900, color: '#10b981', lineHeight: 1.05 }}>
-              {sim.meses} <span style={{ fontSize: '1rem', fontWeight: 700 }}>meses</span>
-              <span style={{ fontSize: '0.85rem', color: '#52525b', fontWeight: 600 }}> · {sim.libreLabel}</span>
-            </div>
-          ) : (
-            <div style={{ fontSize: '1rem', fontWeight: 800, color: '#ef4444' }}>Sube el monto — no cubre ni los intereses</div>
-          )}
-        </div>
-      </div>
-
-      {/* Comodidad */}
-      <div style={{ marginTop: '0.75rem', padding: '0.6rem 0.8rem', borderRadius: '9px',
-        background: paraVivir >= 0 ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
-        border: `1px solid ${paraVivir >= 0 ? 'rgba(16,185,129,0.25)' : 'rgba(239,68,68,0.3)'}` }}>
-        <span style={{ fontSize: '0.76rem', color: paraVivir >= 0 ? '#10b981' : '#fca5a5', fontWeight: 600 }}>
-          {paraVivir >= 0
-            ? <>✅ Te sobran <b>{fmt(paraVivir)}/mes</b> para ti, además de comida y transporte. Cómodo.</>
-            : <>⚠️ Te faltan <b>{fmt(-paraVivir)}/mes</b>: este ritmo se come tu supervivencia. Sale de un bono de la empresa, no del salario solo.</>}
+        <span style={{ color: '#fff', fontWeight: 800, fontSize: '1rem' }}>Plan bola de nieve</span>
+        <span style={{ marginLeft: 'auto', fontSize: '0.66rem', color: GOLD, fontWeight: 700, background: `${GOLD}14`, padding: '0.2rem 0.55rem', borderRadius: '999px' }}>
+          {fmtK(PRESU_QUINCENA)}/quincena fijo · {fmtK(PRESU_MES)}/mes
         </span>
+      </div>
+
+      <div>
+        <div style={{ fontSize: '0.62rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700 }}>Deuda libre en</div>
+        <div style={{ fontSize: '2rem', fontWeight: 900, color: '#10b981', lineHeight: 1.05 }}>
+          {plan.meses} <span style={{ fontSize: '1rem', fontWeight: 700 }}>meses</span>
+          <span style={{ fontSize: '0.85rem', color: '#52525b', fontWeight: 600 }}> · {plan.libreLabel}</span>
+        </div>
       </div>
 
       {/* Ataca ahora */}
@@ -128,7 +43,7 @@ const PlanSalida: React.FC<{ deudas: PersonalDebt[] }> = ({ deudas }) => {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '0.75rem', padding: '0.7rem 0.85rem', borderRadius: '10px', background: '#0d0d0d', border: '1px solid #7f1d1d55' }}>
           <Zap size={18} style={{ color: '#ef4444', flexShrink: 0 }} />
           <div style={{ fontSize: '0.78rem', color: '#e4e4e7', lineHeight: 1.45 }}>
-            <b style={{ color: '#fff' }}>Ataca ahora: {target.acreedor}.</b> Paga los mínimos de todas y tírale TODO tu excedente a esta ({target.tasaMensual}%/mes — la que más te sangra). Cuando muera, ese dinero rueda solo a la siguiente.
+            <b style={{ color: '#fff' }}>Ataca ahora: {target.acreedor}.</b> El excedente de tus $700k va a esta ({target.tasaMensual}%/mes — la que más te sangra). Cuando muera, rueda solo a la siguiente. Los <b style={{ color: '#fff' }}>montos exactos por mes</b> ya están en tus movimientos proyectados.
           </div>
         </div>
       )}
@@ -137,17 +52,17 @@ const PlanSalida: React.FC<{ deudas: PersonalDebt[] }> = ({ deudas }) => {
       <div style={{ marginTop: '0.85rem' }}>
         <div style={{ fontSize: '0.64rem', color: '#52525b', textTransform: 'uppercase', fontWeight: 700, marginBottom: '0.4rem' }}>Orden en que caen 💀</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-          {sim.orden.map((o, i) => (
-            <div key={o.acreedor} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', fontSize: '0.76rem' }}>
+          {plan.orden.map((o, i) => (
+            <div key={o.id} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', fontSize: '0.76rem' }}>
               <span style={{ width: '18px', height: '18px', borderRadius: '50%', background: i === 0 ? '#ef444422' : '#18181b', color: i === 0 ? '#ef4444' : '#71717a', fontWeight: 800, fontSize: '0.66rem', display: 'grid', placeItems: 'center', flexShrink: 0 }}>{i + 1}</span>
               <span style={{ flex: 1, color: '#a0aec0' }}>{o.acreedor}</span>
-              <span style={{ color: '#10b981', fontWeight: 700 }}>{o.muere > 0 ? o.muereLabel : '—'}</span>
+              <span style={{ color: '#10b981', fontWeight: 700 }}>{o.label}</span>
             </div>
           ))}
         </div>
       </div>
       <div style={{ fontSize: '0.66rem', color: '#52525b', marginTop: '0.7rem', lineHeight: 1.5 }}>
-        Interés total que pagarías en el camino: <b style={{ color: '#a0aec0' }}>{fmt(Math.round(sim.interesTotal))}</b>. Mientras más subas el monto, menos interés y más rápido sales.
+        Interés total en el camino: <b style={{ color: '#a0aec0' }}>{fmt(Math.round(plan.interesTotal))}</b>. Cada mes pagas los mínimos + el excedente a la de arriba, y las cuotas se recalculan solas al abonar.
       </div>
     </div>
   );
@@ -164,12 +79,18 @@ export const PersonalDeudas: React.FC = () => {
     .sort((a, b) => (a.fechaProximoPago || '9999').localeCompare(b.fechaProximoPago || '9999'));
   const saldadas = debts.filter(d => d.activa && d.saldoActual <= 0);
   const totalDeuda = activas.reduce((s, d) => s + d.saldoActual, 0);
-  const totalCuotas = activas.reduce((s, d) => s + d.cuotaMinima, 0);
-  // Cuánto pide el plan este mes (cuotas con próximo pago dentro del mes en curso)
+
+  // Plan bola de nieve (misma lógica que el motor que escribe los proyectados)
+  const plan = useMemo(() => simularSnowball(activas.map(toSim), PRESU_MES), [activas]);
+  const target = useMemo(() =>
+    activas.slice().sort((a, b) => ((b.tasaMensual ?? 2) - (a.tasaMensual ?? 2)) || (a.saldoActual - b.saldoActual))[0],
+    [activas]);
+  // Próximo pago (según bola de nieve) y mes de muerte, por deuda
+  const proximoDe = (id: string) => plan.movimientos.filter(m => m.deudaId === id).sort((a, b) => a.fecha.localeCompare(b.fecha))[0];
+  const muereDe = (id: string) => plan.orden.find(o => o.id === id);
+  // Cuánto pide el plan este mes en curso (suma de los proyectados de este mes)
   const mesEnCurso = hoyISO().slice(0, 7);
-  const aPagarEsteMes = activas
-    .filter(d => (d.fechaProximoPago || '').startsWith(mesEnCurso))
-    .reduce((s, d) => s + Math.min(d.cuotaMinima, d.saldoActual), 0);
+  const aPagarEsteMes = plan.movimientos.filter(m => m.fecha.startsWith(mesEnCurso)).reduce((s, m) => s + m.valor, 0);
 
   if (loading) return <div style={{ padding: '2rem', color: '#a1a1aa' }}>Cargando...</div>;
   if (setupError) return <div style={{ padding: '2rem', color: GOLD }}>Activa el modo Personal desde la página Hoy.</div>;
@@ -199,13 +120,13 @@ export const PersonalDeudas: React.FC = () => {
             ))}
           </div>
 
-          {/* Plan de salida interactivo */}
-          <PlanSalida deudas={activas} />
+          {/* Resumen del plan (bola de nieve) */}
+          <PlanResumen plan={plan} target={target} />
 
           {/* Cómo pagar */}
           {activas.length > 0 && (
             <div style={{ fontSize: '0.72rem', color: '#52525b', lineHeight: 1.5, padding: '0 0.25rem' }}>
-              💸 Paga cada deuda con su botón <b style={{ color: '#a0aec0' }}>Pagar</b> (viene pre-cargado). Si abonas de más, sales antes y las próximas cuotas se recalculan solas.
+              💸 Paga cada deuda con su botón <b style={{ color: '#a0aec0' }}>Pagar</b> (viene pre-cargado con el monto exacto de la bola de nieve). Si abonas de más, sales antes y todo se recalcula solo.
             </div>
           )}
 
@@ -220,28 +141,27 @@ export const PersonalDeudas: React.FC = () => {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             {activas.map(d => {
               const pagado = d.montoOriginal > 0 ? Math.min(100, ((d.montoOriginal - d.saldoActual) / d.montoOriginal) * 100) : 0;
-              const pagosRestantes = d.cuotaMinima > 0 ? Math.ceil(d.saldoActual / d.cuotaMinima) : 0;
-              let libreMes = '';
-              if (pagosRestantes > 0 && d.fechaProximoPago) {
-                const f = new Date(d.fechaProximoPago + 'T12:00:00');
-                f.setMonth(f.getMonth() + (pagosRestantes - 1));
-                libreMes = f.toLocaleDateString('es-CO', { month: 'short', year: '2-digit' });
-              }
+              const prox = proximoDe(d.id);           // próximo pago según bola de nieve
+              const muere = muereDe(d.id);             // mes en que se salda
+              const esObjetivo = target?.id === d.id;
               return (
-                <div key={d.id} className="card" style={{ padding: '1.1rem 1.25rem' }}>
+                <div key={d.id} className="card" style={{ padding: '1.1rem 1.25rem', border: esObjetivo ? '1px solid #ef444455' : undefined }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                       <CreditCard size={18} style={{ color: '#ef4444' }} />
                       <div>
-                        <div style={{ color: '#fff', fontWeight: 700 }}>{d.acreedor} <span style={{ fontSize: '0.7rem', color: '#52525b', fontWeight: 500 }}>{TIPOS[d.tipo]}</span></div>
+                        <div style={{ color: '#fff', fontWeight: 700 }}>
+                          {d.acreedor} <span style={{ fontSize: '0.7rem', color: '#52525b', fontWeight: 500 }}>{TIPOS[d.tipo]}</span>
+                          {esObjetivo && <span style={{ fontSize: '0.6rem', color: '#ef4444', fontWeight: 800, background: '#ef444418', padding: '0.1rem 0.4rem', borderRadius: '999px', marginLeft: '0.4rem' }}>ATACAR</span>}
+                        </div>
                         <div style={{ fontSize: '0.7rem', color: '#52525b' }}>
-                          Cuota del plan {fmt(d.cuotaMinima)}
-                          {d.fechaProximoPago && ` · próximo ${new Date(d.fechaProximoPago + 'T12:00:00').toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })}`}
+                          Próximo pago <b style={{ color: '#a0aec0' }}>{fmt(prox ? prox.valor : d.cuotaMinima)}</b>
+                          {prox && ` · ${new Date(prox.fecha + 'T12:00:00').toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })}`}
                           {d.tasaMensual != null && ` · ${d.tasaMensual}%/mes`}
                         </div>
-                        {pagosRestantes > 0 && (
+                        {muere && (
                           <div style={{ fontSize: '0.7rem', color: '#10b981', fontWeight: 700, marginTop: '0.15rem' }}>
-                            🎯 Libre en {pagosRestantes} {pagosRestantes === 1 ? 'pago' : 'pagos'}{libreMes && ` · ${libreMes}`}
+                            💀 Se salda en {muere.label}
                           </div>
                         )}
                       </div>
@@ -298,7 +218,7 @@ export const PersonalDeudas: React.FC = () => {
 
       {/* Modal pagar */}
       {pagando && (
-        <PagarModal debt={pagando} onClose={() => setPagando(null)}
+        <PagarModal debt={pagando} sugerido={proximoDe(pagando.id)?.valor ?? pagando.cuotaMinima} onClose={() => setPagando(null)}
           onSave={async valor => { await pagarDeuda(pagando, valor, hoyISO()); setPagando(null); }} />
       )}
     </div>
@@ -344,8 +264,8 @@ const NuevaDeudaForm: React.FC<{
   );
 };
 
-const PagarModal: React.FC<{ debt: PersonalDebt; onClose: () => void; onSave: (valor: number) => Promise<void> }> = ({ debt, onClose, onSave }) => {
-  const [valor, setValor] = useState(String(Math.round(debt.cuotaMinima)).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
+const PagarModal: React.FC<{ debt: PersonalDebt; sugerido: number; onClose: () => void; onSave: (valor: number) => Promise<void> }> = ({ debt, sugerido, onClose, onSave }) => {
+  const [valor, setValor] = useState(String(Math.round(sugerido)).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
   const [saving, setSaving] = useState(false);
   const num = Number(valor.replace(/\./g, '')) || 0;
   return (
@@ -353,7 +273,7 @@ const PagarModal: React.FC<{ debt: PersonalDebt; onClose: () => void; onSave: (v
       <div className="card" style={{ width: '360px', maxWidth: '100%', border: `1px solid ${GOLD}44` }}>
         <h3 style={{ color: '#fff', fontWeight: 800, marginBottom: '0.25rem' }}>💸 Pagar {debt.acreedor}</h3>
         <div style={{ fontSize: '0.72rem', color: '#52525b', marginBottom: '1rem' }}>
-          Saldo actual: {fmt(debt.saldoActual)} · Viene pre-cargado con la cuota del plan. Pagar de más = sales antes; las próximas cuotas se ajustan solas. Se registra automático en Movimientos.
+          Saldo actual: {fmt(debt.saldoActual)} · Viene pre-cargado con el monto exacto de la bola de nieve. Pagar de más = sales antes; todo se recalcula solo. Se registra automático en Movimientos.
         </div>
         <label style={lbl}>Valor del pago COP</label>
         <input style={{ ...inp, fontSize: '1.1rem', fontWeight: 700, color: '#10b981' }} inputMode="numeric" autoFocus

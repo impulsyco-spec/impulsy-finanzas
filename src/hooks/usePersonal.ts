@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { fechaISO } from '../lib/dates';
 import { LedgerMovement } from '../types';
 import { esPagoFundador, esBonoFundador } from '../lib/founderRules';
+import { simularSnowball } from '../lib/snowball';
 
 // ── Configuración del modo Personal ─────────────────────────────
 // Calibrada con Agustín (16 jun 2026): priorizar inversión/deuda, ocio medido.
@@ -17,6 +18,8 @@ export const PERSONAL_CONFIG = {
   supervivenciaQuincena: 400_000, // mínimo intocable para comer/moverse por quincena
   pctLibertadExcedente: 0.50,     // del excedente: 50% acelera deuda (Libertad), 50% fiesta
   fraccionCuotaDeudaPorQuincena: 0.5, // cada quincena reserva la mitad de las cuotas del mes
+  // ── Plan de deudas (14 jul 2026): presupuesto FIJO e inviolable ──
+  presupuestoDeudaQuincena: 350_000, // se destina cada quincena a deudas → $700k/mes con bola de nieve
 };
 
 export const CATS_PERSONAL_EGRESO = [
@@ -114,38 +117,34 @@ async function crearProyeccionesPersonales(id: string, item: Omit<PersonalRecurr
   if (error) console.error('crearProyeccionesPersonales:', error.message);
 }
 
-// Proyecta las cuotas FALTANTES de una deuda como movimientos 'esperado' (categoría
-// Deudas), un mes por cuota desde su próximo pago. Idempotente: borra las esperadas
-// previas y regenera SIEMPRE desde el saldo actual → si abonas de más, las cuotas
-// futuras se reducen/recortan solas. No toca las ya pagadas (confirmadas).
-const HORIZONTE_CUOTAS = 18; // hasta 18 meses adelante (suficiente para ver y planear)
-async function reproyectarCuotasDeuda(debt: PersonalDebt) {
+// Reproyecta TODAS las deudas con la BOLA DE NIEVE global: presupuesto fijo
+// mensual ($700k), mínimos a todas + excedente a la de mayor interés, y cuando
+// una muere su cuota rueda a la siguiente. Escribe los movimientos 'esperado'
+// (categoría Deudas) con el monto EXACTO a pagar cada mes por deuda. Idempotente:
+// borra las esperadas de deuda y regenera desde los saldos reales actuales.
+async function reproyectarSnowball() {
   await supabase.from('personal_movements').delete()
-    .like('fuente', `deuda:${debt.id}:%`).eq('estado', 'esperado');
-  if (!debt.activa || debt.saldoActual <= 0 || debt.cuotaMinima <= 0 || !debt.fechaProximoPago) return;
+    .like('fuente', 'deuda:%').eq('estado', 'esperado');
 
-  const { data: pagadas } = await supabase.from('personal_movements')
-    .select('fuente').like('fuente', `deuda:${debt.id}:%`).eq('estado', 'confirmado');
-  const mesesPagados = new Set((pagadas || []).map((p: any) => p.fuente as string));
+  const { data } = await supabase.from('personal_debts').select('*').eq('activa', true);
+  const deudas = (data || [])
+    .filter((d: any) => Number(d.saldo_actual) > 0 && d.fecha_proximo_pago && Number(d.cuota_minima) > 0)
+    .map((d: any) => ({
+      id: d.id, acreedor: d.acreedor, saldoActual: Number(d.saldo_actual),
+      tasaMensual: d.tasa_mensual != null ? Number(d.tasa_mensual) : undefined,
+      cuotaMinima: Number(d.cuota_minima), fechaProximoPago: d.fecha_proximo_pago as string,
+    }));
+  if (deudas.length === 0) return;
 
-  const base = new Date(debt.fechaProximoPago + 'T12:00:00');
-  const dia = base.getDate();
-  let saldo = debt.saldoActual;
-  const rows: Record<string, unknown>[] = [];
-  for (let i = 0; i < HORIZONTE_CUOTAS && saldo > 0; i++) {
-    const ultimo = new Date(base.getFullYear(), base.getMonth() + i + 1, 0).getDate();
-    const d = new Date(base.getFullYear(), base.getMonth() + i, Math.min(dia, ultimo));
-    const fecha = fechaISO(d);
-    const fuente = `deuda:${debt.id}:${fecha.slice(0, 7)}`;
-    const valor = Math.min(debt.cuotaMinima, saldo);
-    if (!mesesPagados.has(fuente)) {
-      rows.push({ fecha, naturaleza: 'egreso', descripcion: `Cuota ${debt.acreedor}`, valor, categoria: 'Deudas', estado: 'esperado', fuente });
-    }
-    saldo -= valor;
-  }
+  const { movimientos } = simularSnowball(deudas, PERSONAL_CONFIG.presupuestoDeudaQuincena * 2);
+  const rows = movimientos.map(m => ({
+    fecha: m.fecha, naturaleza: 'egreso', descripcion: `Cuota ${m.acreedor}`,
+    valor: m.valor, categoria: 'Deudas', estado: 'esperado',
+    fuente: `deuda:${m.deudaId}:${m.fecha.slice(0, 7)}`,
+  }));
   if (rows.length) {
     const { error } = await supabase.from('personal_movements').insert(rows);
-    if (error) console.error('reproyectarCuotasDeuda:', error.message);
+    if (error) console.error('reproyectarSnowball:', error.message);
   }
 }
 
@@ -370,7 +369,7 @@ export function usePersonal() {
       notas: d.notas || null,
     }).select().single();
     if (error) throw error;
-    if (data) await reproyectarCuotasDeuda({ ...d, id: data.id, activa: true });
+    await reproyectarSnowball();
     await fetchAll();
   };
 
@@ -383,15 +382,8 @@ export function usePersonal() {
     if (c.activa !== undefined) patch.activa = c.activa;
     const { error } = await supabase.from('personal_debts').update(patch).eq('id', id);
     if (error) throw error;
-    // Reproyecta las cuotas con el estado fresco de la deuda
-    const { data } = await supabase.from('personal_debts').select('*').eq('id', id).single();
-    if (data) await reproyectarCuotasDeuda({
-      id: data.id, acreedor: data.acreedor, tipo: data.tipo,
-      montoOriginal: Number(data.monto_original), saldoActual: Number(data.saldo_actual),
-      cuotaMinima: Number(data.cuota_minima),
-      tasaMensual: data.tasa_mensual != null ? Number(data.tasa_mensual) : undefined,
-      fechaProximoPago: data.fecha_proximo_pago || undefined, activa: data.activa, notas: data.notas || undefined,
-    });
+    // Reproyecta TODO el plan con el estado fresco (cambiar una deuda re-reparte la bola de nieve)
+    await reproyectarSnowball();
     await fetchAll();
   };
 
@@ -431,23 +423,14 @@ export function usePersonal() {
       saldo_actual: nuevoSaldo, fecha_proximo_pago: nuevaFecha || null,
       updated_at: new Date().toISOString(),
     }).eq('id', debt.id);
-    await reproyectarCuotasDeuda({ ...debt, saldoActual: nuevoSaldo, fechaProximoPago: nuevaFecha });
+    // Pagar una deuda libera presupuesto → re-reparte la bola de nieve completa
+    await reproyectarSnowball();
     await fetchAll();
   };
 
-  // Regenera la proyección de TODAS las deudas activas (idempotente). Lee fresco
-  // para no depender del estado (que puede estar desfasado tras una mutación).
+  // Regenera la proyección completa (bola de nieve) desde los saldos reales.
   const reproyectarDeudas = useCallback(async () => {
-    const { data } = await supabase.from('personal_debts').select('*').eq('activa', true);
-    for (const d of (data || [])) {
-      await reproyectarCuotasDeuda({
-        id: d.id, acreedor: d.acreedor, tipo: d.tipo,
-        montoOriginal: Number(d.monto_original), saldoActual: Number(d.saldo_actual),
-        cuotaMinima: Number(d.cuota_minima),
-        tasaMensual: d.tasa_mensual != null ? Number(d.tasa_mensual) : undefined,
-        fechaProximoPago: d.fecha_proximo_pago || undefined, activa: d.activa, notas: d.notas || undefined,
-      });
-    }
+    await reproyectarSnowball();
     await fetchAll();
   }, [fetchAll]);
 
